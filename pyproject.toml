@@ -1,0 +1,46 @@
+[tool.poetry]
+name = "scphytr"
+version = "0.0.0"
+description = "Phylogenetic comparative methods for single-cell gene expression data."
+license = "MIT"
+authors = ["pedrofale <pedro.miguel.ferreira.pf@gmail.com>"]
+readme = "README.md"
+repository = "https://github.com/cbg-ethz/scdef"
+packages = [{include = "scphytr"}]
+
+[tool.poetry.dependencies]
+python = ">=3.9,<4.0"
+pandas = "^2.2.2"
+numpy = "^1.26.4"
+jax = ">=0.4.13"
+jaxlib = ">=0.4.13"
+optax = "^0.2.3"
+tensorflow-probability = "^0.24.0"
+scanpy = {extras = ["leidenalg"], version =  "^1.9.5"}
+anndata = "^0.10.5"
+click = "^8.0.1"
+tqdm = "^4.64.0"
+graphviz = "^0.14.2"
+igraph = "^0.10.4"
+numba = "^0.60.0"
+decoupler = "^1.7.0"
+
+[tool.poetry.group.extras]
+optional = true
+
+[tool.poetry.group.extras.dependencies]
+leidenalg = '*'
+harmonypy = '*'
+scanorama = '*'
+scikit-learn = '*'
+
+[tool.poetry.dev-dependencies]
+bump2version = "^1.0.1"
+black = "^23.3.0"
+pytest = "^6.2.4"
+mkdocs = "^1.4.3"
+mkdocstrings = {extras = ["python"], version = "^0.25.2"}
+mkdocs-material = "^9.1.18"
+mkdocs-jupyter = "^0.24.2 "
+notebook = "~6.0.0"
+jupyter_contrib_nbextensions = "^0.7.0"
