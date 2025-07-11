@@ -1,5 +1,4 @@
 import numpy as np
-import scphytr.utils as utils
 
 def fit_pic(root):
     # tree must contain branch lengths for all nodes except root, and trait values for all leaves
@@ -36,21 +35,19 @@ def fit_pic(root):
     return est_rate, standardized_contrasts
     
 
-def fit_ml(root):
-    
-
-def fit_mcmc(root, trait):
-
-def fit_vi(root, trait):
-
 
 class BrownianMotion(object):
     def __init__(self, tree, trait_means, trait_cov_matrix):
+        """
+        tree: ete3 tree
+        trait_means: means of traits, named
+        trait_cov_matrix: correlations between traits, named -- TODO: extend to per-clade trait covariance matrices
+        """
         self.tree = tree # ete3 tree
-        self.n_species = len(self.tree.get_species())
+        self.n_species = len(self.tree.phylotree.get_leaf_names())
         self.trait_means = trait_means # means of traits
         self.trait_cov_matrix = trait_cov_matrix # correlations between traits -- TODO: extend to per-clade trait covariance matrices
-        self.species_cov_matrix = utils.tree.make_species_cov_matrix(tree)
+        self.species_cov_matrix = self.tree.get_species_cov_matrix()
 
     @staticmethod
     def multivariate_brownian_motion_path(T, N, cov_matrix):
@@ -66,7 +63,7 @@ class BrownianMotion(object):
         np.ndarray: Brownian motion path.
         """
         dt = T / N  # Time step size
-        dW = np.random.multivariate_normal(0, cov_matrix*dt, N)  # Increments for every trait
+        dW = np.random.multivariate_normal(np.zeros(cov_matrix.shape[0]), cov_matrix*dt, N)  # Increments for every trait
         W = np.concatenate(([0], np.cumsum(dW)))  # Cumulative sum to get the path
         return W
 
@@ -86,19 +83,20 @@ class BrownianMotion(object):
             if root.is_leaf():
                 species_paths.append(path)
             for child in root.children:
-                local_path = self.multivariate_brownian_motion_path(child['branch_length'], N, self.trait_cov_matrix)
-                path = np.concatenate((path, local_path))
+                local_path = self.multivariate_brownian_motion_path(child.dist, N, self.trait_cov_matrix)
+                path = np.concatenate((path, path[-1] + local_path))
                 descend(child, path)
         
-        path = self.trait_means + self.multivariate_brownian_motion_path(self.tree.root['branch_length'], N, self.trait_cov_matrix)
-        return descend(self.tree.root, path)
+        path = self.trait_means + self.multivariate_brownian_motion_path(self.tree.root.dist, N, self.trait_cov_matrix)
+        descend(self.tree.root, path)
+        return species_paths
 
     def simulate_traits(self, seed=42):
         np.random.seed(seed)
         # Create variance-covariance matrix
         a = np.repeat(self.trait_means, self.n_species) 
-        V = np.outer(self.trait_cov_matrix, self.species_cov_matrix) 
+        V = np.kron(self.trait_cov_matrix, self.species_cov_matrix) 
         species_trait_values = np.random.multivariate_normal(a, V) 
-        species_trait_values = species_trait_values.reshape(self.n_species, -1)
+        species_trait_values = species_trait_values.reshape(self.n_species, -1) # TODO: Make sure this is species x traits...
         return species_trait_values
 
