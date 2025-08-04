@@ -43,6 +43,11 @@ class Tree(object):
         species_cov_matrix = species_cov_matrix.combine_first(species_cov_matrix.T)
         return species_cov_matrix
 
+    def get_trait_values(self):
+        trait_values = []
+        for leaf in self.phylotree.get_leaves():
+            trait_values.append(leaf.trait)
+        return trait_values
 
     def load_newick(self, tree_file):
         self.phylotree = PhyloTree(tree_file)

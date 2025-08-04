@@ -1,42 +1,9 @@
 import numpy as np
-
-def fit_pic(root):
-    # tree must contain branch lengths for all nodes except root, and trait values for all leaves
-    standardized_contrasts = []
-    
-    def new_trait(t1, t2, v1, v2):
-        return ((1/v1)*t1 + (1/v2)*t2)/(1/v1 + 1/v2)
-    
-    def new_length(vk, v1, v2):
-        return vk + v1*v2/(v1+v2)
-
-    # Pruning algorithm
-    def descend(root):
-        trait_values = []
-        branch_lengths = []
-        for child in root.get_children():
-            child_trait_value, child_branch_length = descend(child)
-            trait_values.append(child_trait_value)
-            branch_lengths.append(child_branch_length)
-        
-        new_trait_value = root.trait
-        new_branch_length = root.dist
-        if len(trait_values) > 0:
-            new_trait_value = new_trait(trait_values[0], trait_values[1], branch_lengths[0], branch_lengths[1])
-            new_branch_length = new_length(root.dist, branch_lengths[0], branch_lengths[1])
-            standardized_contrast = (trait_values[-1]-trait_values[0])/sum(branch_lengths)
-            standardized_contrasts.append(standardized_contrast)
-
-        return new_trait_value, new_branch_length
-    
-    descend(root)
-
-    est_rate = sum(np.array(standardized_contrasts)**2)/len(standardized_contrasts)
-    return est_rate, standardized_contrasts
-    
+import pandas as pd
+from scipy.stats import multivariate_normal
 
 class BrownianMotion(object):
-    def __init__(self, tree, trait_means, trait_cov_matrix):
+    def __init__(self, tree, trait_means, trait_cov_matrix, learnable_parameters=['rates']):
         """
         tree: ete3 tree
         trait_means: means of traits, named
@@ -47,6 +14,8 @@ class BrownianMotion(object):
         self.trait_means = trait_means # means of traits
         self.trait_cov_matrix = trait_cov_matrix # correlations between traits -- TODO: extend to per-clade trait covariance matrices
         self.species_cov_matrix = self.tree.get_species_cov_matrix()
+        self.learnable_parameters = learnable_parameters
+        self.trait_values = self.tree.get_trait_values() # species1_trait1, species1_trait2, species2_trait1, species2_trait2, ...
 
     @staticmethod
     def multivariate_brownian_motion_path(T, N, cov_matrix):
@@ -99,3 +68,10 @@ class BrownianMotion(object):
         species_trait_values = species_trait_values.reshape(self.n_species, -1, order='F')
         return pd.DataFrame(species_trait_values, index=self.species_cov_matrix.index, columns=self.trait_means.index)
 
+    def score(self, trait_means, trait_cov_matrix):
+        a = np.repeat(trait_means, self.n_species)  # species1_trait1, species1_trait2, species2_trait1, species2_trait2, ...
+        V = np.kron(trait_cov_matrix, self.species_cov_matrix) 
+        return multivariate_normal.logpdf(self.trait_values, a, V)
+        
+    def set_trait_cov_matrix(self, rates):
+        self.trait_cov_matrix = np.diag(rates)

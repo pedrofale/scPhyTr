@@ -17,6 +17,7 @@ ph.pp.setup_anndata(adata, tree) # adds tree to anndata object
 ph.pp.cut_tree(adata, min_cells=10)
 
 ph.tl.estimate_global_rate(adata, character=, model=) # Populates the adata.uns with a global rate for the specified character using the specified model
+ph.tl.estimate_paths(adata, character=, model=) # Populates the adata.uns with a trait path for each species. Uses the existing uns.model if available
 ph.tl.estimate_lineage_rates(adata, lineage=) # Populates the adata.uns with a rate for each lineage
 ph.tl.estimate_state_rates(adata, state=) # Populates the adata.uns with a rate for each state
 ph.tl.estimate_evolutionary_correlation(adata, characters=) # Populates the adata.uns with a correlation matrix for the specified characters
@@ -28,6 +29,10 @@ ph.pl.trait_value(adata, color=[], state=) # same as above, but also highlights 
 ph.pl.trait_trace(adata, color=[]) # plots the trace of each trait over time
 ph.pl.lineage_rates(adata, color=[]) # colors each lineage with the evolutionary rate for each trait
 ph.pl.lineage_optima(adata, color=[]) # colors each lineage with the evolutionary optimum for each trait
+
+ph.tl.simulate_traits(adata) # use the fitted model to simulate trait values. put them in obs
+ph.tl.simulate_paths(adata) # use the fitted model to simulate trait paths. put them in uns
+ph.pl.trait_path(adata)
 
 # Look at the confidence intervals of estimates
 ph.pl.violin(adata, color=[]) 
