@@ -10,14 +10,22 @@ class Tree(object):
     def __init__(self, tree_file=None):
         self.phylotree = None
         self.root = None
+        self.trait_values = None
+        self.species_cov_matrix = None
         if tree_file is not None:
             self.load_newick(tree_file)
 
     def simulate_tree(self, n_leaves, n_internal_nodes, n_branches, branch_length_mean, branch_length_std, trait_mean, trait_std):
         self.phylotree = PhyloTree.simulate_tree(n_leaves, n_internal_nodes, n_branches, branch_length_mean, branch_length_std)
         self.root = self.phylotree.get_tree_root()
+        self.make_species_cov_matrix()
 
     def get_species_cov_matrix(self):
+        if self.species_cov_matrix is None:
+            self.make_species_cov_matrix()
+        return self.species_cov_matrix
+
+    def make_species_cov_matrix(self):
         # Create covariance matrix for species from tree -- TODO: benchmark this
         species_cov_matrix = pd.DataFrame(index=self.phylotree.get_leaf_names(), columns=self.phylotree.get_leaf_names())
         species_cov_matrix.index = species_cov_matrix.columns
@@ -41,17 +49,29 @@ class Tree(object):
 
         descend(self.root, total_length=0)
         species_cov_matrix = species_cov_matrix.combine_first(species_cov_matrix.T)
-        return species_cov_matrix
+        self.species_cov_matrix = species_cov_matrix
+
+    def set_trait_values(self, species_trait_values):
+        """
+        species_trait_values: dictionary with species as keys and trait values as dictionaries with trait names as keys
+        """
+        for node in self.phylotree.get_leaves():
+            node.trait = {character: species_trait_values[node.name][character] for character in species_trait_values[node.name]}
+        self.trait_values = self.get_trait_values()
 
     def get_trait_values(self):
         trait_values = []
         for leaf in self.phylotree.get_leaves():
             trait_values.append(leaf.trait)
-        return trait_values
+        return np.array(trait_values)
+
+    def get_trait_names(self):
+        return list(self.phylotree.get_leaves()[0].trait.keys())
 
     def load_newick(self, tree_file):
         self.phylotree = PhyloTree(tree_file)
         self.root = self.phylotree.get_tree_root()
+        self.make_species_cov_matrix()
     
     def save_newick(self, tree_file):
         self.phylotree.write(format=1, outfile=tree_file)

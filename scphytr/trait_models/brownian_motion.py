@@ -1,21 +1,32 @@
 import numpy as np
 import pandas as pd
 from scipy.stats import multivariate_normal
+from .base import Base
 
-class BrownianMotion(object):
+class BrownianMotion(Base):
     def __init__(self, tree, trait_means, trait_cov_matrix, learnable_parameters=['rates']):
+        super().__init__(tree, learnable_parameters)
         """
         tree: ete3 tree
         trait_means: means of traits, named
         trait_cov_matrix: correlations between traits, named -- TODO: extend to per-clade trait covariance matrices
         """
-        self.tree = tree # ete3 tree
-        self.n_species = len(self.tree.phylotree.get_leaf_names())
         self.trait_means = trait_means # means of traits
         self.trait_cov_matrix = trait_cov_matrix # correlations between traits -- TODO: extend to per-clade trait covariance matrices
-        self.species_cov_matrix = self.tree.get_species_cov_matrix()
-        self.learnable_parameters = learnable_parameters
-        self.trait_values = self.tree.get_trait_values() # species1_trait1, species1_trait2, species2_trait1, species2_trait2, ...
+        self.validate_trait_shapes()
+
+    def validate_trait_shapes(self):
+        if self.trait_means.shape[0] != self.trait_cov_matrix.shape[0]:
+            raise ValueError(f"Trait means and covariance matrix must have the same number of traits. Got {self.trait_means.shape[0]} and {self.trait_cov_matrix.shape[0]}")
+        n = self.tree.phylotree.get_leaves()[0]
+        if 'trait' in n.features:
+            if self.trait_means.shape[0] != len(n.trait):
+                raise ValueError(f"Trait means and covariance matrix must have the same number of traits as the nodes. Got {self.trait_means.shape[0]} and {len(n.trait)}")
+
+    def score(self, trait_means, trait_cov_matrix):
+        a = np.repeat(trait_means, self.n_species)  # species1_trait1, species1_trait2, species2_trait1, species2_trait2, ...
+        V = np.kron(trait_cov_matrix, self.tree.get_species_cov_matrix()) 
+        return multivariate_normal.logpdf(self.tree.trait_values, a, V)
 
     @staticmethod
     def multivariate_brownian_motion_path(T, N, cov_matrix):
@@ -63,15 +74,16 @@ class BrownianMotion(object):
         np.random.seed(seed)
         # Create variance-covariance matrix
         a = np.repeat(self.trait_means, self.n_species) 
-        V = np.kron(self.trait_cov_matrix, self.species_cov_matrix) 
+        V = np.kron(self.trait_cov_matrix, self.tree.get_species_cov_matrix()) 
         species_trait_values = np.random.multivariate_normal(a, V) 
         species_trait_values = species_trait_values.reshape(self.n_species, -1, order='F')
-        return pd.DataFrame(species_trait_values, index=self.species_cov_matrix.index, columns=self.trait_means.index)
-
-    def score(self, trait_means, trait_cov_matrix):
-        a = np.repeat(trait_means, self.n_species)  # species1_trait1, species1_trait2, species2_trait1, species2_trait2, ...
-        V = np.kron(trait_cov_matrix, self.species_cov_matrix) 
-        return multivariate_normal.logpdf(self.trait_values, a, V)
+        return pd.DataFrame(species_trait_values, index=self.tree.get_species_cov_matrix().index, columns=self.trait_means.index)
         
     def set_trait_cov_matrix(self, rates):
         self.trait_cov_matrix = np.diag(rates)
+
+    def compute_analytical_solution(self):
+        X = self.tree.get_trait_values()
+        a = np.repeat(self.trait_means, self.n_species) 
+        R = np.kron(self.trait_cov_matrix, self.tree.get_species_cov_matrix()) 
+        return multivariate_normal.logpdf(X, a, R)
