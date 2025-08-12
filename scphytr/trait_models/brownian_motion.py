@@ -4,6 +4,8 @@ from scipy.stats import multivariate_normal
 from .base import Base
 import jax.numpy as jnp
 import jax.scipy as jsp
+import tensorflow_probability.substrates.jax.distributions as tfd
+
 
 class BrownianMotion(Base):
     def __init__(self, tree, trait_means, trait_cov_matrix, learnable_parameters=['rates']):
@@ -117,10 +119,12 @@ class BrownianMotion(Base):
         # ensure JAX array
         return jnp.asarray(self.tree.get_species_cov_matrix().values)
 
-    def log_likelihood(self, params, trait_values):
+    def logpdf(self, trait_values, params):
         trait_means, trait_cov = params                       # jnp arrays
         a = jnp.repeat(trait_means, self.n_species)             # trait-major order
         V = jnp.kron(trait_cov, self._species_cov())          # (p*n)×(p*n)
-        return jsp.stats.multivariate_normal.logpdf(
-            jnp.asarray(trait_values), a, V
-        )
+        return tfd.MultivariateNormalFullCovariance(loc=a, covariance_matrix=V).log_prob(trait_values)
+
+    def sample_prior(self, params, rng):
+        trait_means, trait_cov = params                       # jnp arrays
+        return tfd.MultivariateNormalFullCovariance(loc=trait_means, covariance_matrix=trait_cov).sample(rng)

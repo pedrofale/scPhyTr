@@ -8,9 +8,10 @@ from tqdm import tqdm
 
 from .base import Base
 
-class SGD(Base):
+class ML(Base):
     """
-    Stochastic gradient descent for estimating the parameters of a trait model.
+    Maximum likelihood estimation for estimating the parameters of a trait model.
+    TODO: allow minibatching. Tricky because the observations are not independent -- there's a tree!
     """
     def __init__(self, tree, trait_model, lr=0.1, **kwargs):
         super().__init__(tree, trait_model, **kwargs)
@@ -22,14 +23,14 @@ class SGD(Base):
     @partial(jax.jit, static_argnums=0)  # treat `self` as static; make sure it’s pytree-safe
     def step(self, params, opt_state, trait_values):
         def loss_fn(p):
-            return -self.trait_model.log_likelihood(p, trait_values)
+            return -self.trait_model.logpdf(trait_values, p)
 
         loss, grads = jax.value_and_grad(loss_fn)(params)
         updates, opt_state = self.opt.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         return params, opt_state, loss
 
-    def run_sgd(self, n_steps=100):
+    def run_ml(self, n_steps=100):
         # Initialize the parameters of the model    
         params = [jnp.array(p) for p in self.trait_model.sample_parameters()]
 
@@ -48,5 +49,5 @@ class SGD(Base):
         return params
 
     def fit_trait_model(self, **kwargs):
-        params = self.run_sgd(**kwargs)
+        params = self.run_ml(**kwargs)
         self.trait_model.set_parameters(params)
