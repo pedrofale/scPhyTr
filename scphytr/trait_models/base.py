@@ -7,5 +7,14 @@ class Base(object):
     def get_learnable_parameters(self):
         return self.learnable_parameters
 
+    def sample_parameters(self):
+        raise NotImplementedError("Subclasses must implement this method")
+
+    def set_parameters(self, params):
+        raise NotImplementedError("Subclasses must implement this method")
+
+    def log_likelihood(self, params):
+        raise NotImplementedError("Subclasses must implement this method")
+
     def score(self):
         raise NotImplementedError("Subclasses must implement this method")
