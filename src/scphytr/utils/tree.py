@@ -2,6 +2,8 @@ from ete3 import PhyloTree
 import numpy as np
 import pandas as pd
 import itertools
+from jax.scipy.linalg import cholesky
+import jax.numpy as jnp
 
 class Tree(object):
     """
@@ -11,7 +13,9 @@ class Tree(object):
         self.phylotree = None
         self.root = None
         self.trait_values = None # Species x traits matrix
+        self.trait_values_traitmajor = None # Trait-major order: [t1(s1..sn), t2(s1..sn), ...]
         self.species_cov_matrix = None
+        self.species_cholesky = None
         if tree_file is not None:
             self.load_newick(tree_file)
 
@@ -24,6 +28,11 @@ class Tree(object):
         if self.species_cov_matrix is None:
             self.make_species_cov_matrix()
         return self.species_cov_matrix
+
+    def get_species_cholesky(self):
+        if self.species_cholesky is None:
+            self.make_species_cov_matrix()
+        return self.species_cholesky
 
     def make_species_cov_matrix(self):
         # Create covariance matrix for species from tree -- TODO: benchmark this
@@ -50,11 +59,17 @@ class Tree(object):
         descend(self.root, total_length=0)
         species_cov_matrix = species_cov_matrix.combine_first(species_cov_matrix.T)
         self.species_cov_matrix = species_cov_matrix.astype(float)
+        self.species_cholesky = jnp.asarray(cholesky(self.species_cov_matrix.values, lower=True))
 
     def get_trait_values(self):
         if self.trait_values is None:
             self.make_trait_values()
         return self.trait_values
+
+    def get_trait_values_traitmajor(self):
+        if self.trait_values_traitmajor is None:
+            self.make_trait_values()
+        return self.trait_values_traitmajor
 
     def set_trait_values(self, species_trait_values):
         """
@@ -75,6 +90,7 @@ class Tree(object):
             else:
                 trait_values.append(leaf.trait)
         self.trait_values = np.array(trait_values)
+        self.trait_values_traitmajor = self.trait_values.reshape(-1, order='F')
 
     def get_trait_names(self):
         return list(self.phylotree.get_leaves()[0].trait.keys())

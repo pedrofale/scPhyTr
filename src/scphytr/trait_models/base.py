@@ -1,4 +1,4 @@
-class Base(object):
+class BaseTraitModel(object):
     def __init__(self, tree, learnable_parameters=None):
         self.tree = tree
         self.n_species = len(self.tree.phylotree.get_leaf_names())

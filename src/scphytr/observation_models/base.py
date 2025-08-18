@@ -1,4 +1,4 @@
-class Base(object):
+class BaseObservationModel(object):
     def __init__(self, learnable_parameters=None):
         self.learnable_parameters = learnable_parameters
 

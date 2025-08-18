@@ -6,9 +6,9 @@ import optax
 from functools import partial
 from tqdm import tqdm
 
-from .base import Base
+from .base import BaseInference
 
-class ML(Base):
+class ML(BaseInference):
     """
     Maximum likelihood estimation for estimating the parameters of a trait model.
     TODO: allow minibatching. Tricky because the observations are not independent -- there's a tree!
@@ -23,7 +23,7 @@ class ML(Base):
     @partial(jax.jit, static_argnums=0)  # treat `self` as static; make sure it’s pytree-safe
     def step(self, params, opt_state, trait_values):
         def loss_fn(p):
-            return -self.trait_model.logpdf(trait_values, p)
+            return -self.trait_model.logpdf_prior(trait_values, p)
 
         loss, grads = jax.value_and_grad(loss_fn)(params)
         updates, opt_state = self.opt.update(grads, opt_state, params)

@@ -1,4 +1,4 @@
-from scphytr.inference import MCMC, BBVI, PIC
+from scphytr.inference import MCMC, BBVI, PIC, SGD
 from scphytr.trait_models import trait_models
 from scphytr.observation_models import observation_models
 
@@ -26,6 +26,8 @@ def fit_model(adata, characters, trait_model, observation_model, method='mcmc', 
         alg = MCMC(tree, trait_model, observation_model, method_kwargs=method_kwargs)
     elif method == 'vi':
         alg = BBVI(tree, trait_model, observation_model, method_kwargs=method_kwargs)
+    elif method == 'sgd':
+        alg = SGD(tree, trait_model, observation_model, method_kwargs=method_kwargs)
     elif method == 'pic':
         if trait_model != 'brownian_motion':
             raise ValueError("PIC is only available for Brownian motion")

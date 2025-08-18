@@ -1,9 +1,9 @@
 import numpy as np
 import statsmodels.api as sm
 
-from .base import Base
+from .base import BaseInference
 
-class PIC(Base):
+class PIC(BaseInference):
     """
     Phylogenetic independent contrats (PIC) for estimating the evolutionary rates of traits under a Brownian motion model.
     """

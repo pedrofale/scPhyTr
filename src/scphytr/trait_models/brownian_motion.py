@@ -1,20 +1,22 @@
 import numpy as np
 import pandas as pd
 from scipy.stats import multivariate_normal
-from .base import Base
 import jax.numpy as jnp
-import jax.scipy as jsp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
+from .base import BaseTraitModel
+from ..utils.jax_utils import build_cholesky, mvn_kron_logpdf_traitmajor_with_L, sample_mvnormal_kron_traitmajor
 
-class BrownianMotion(Base):
+
+class BrownianMotion(BaseTraitModel):
     def __init__(self, tree, trait_means, trait_cov_matrix, learnable_parameters=['rates']):
         super().__init__(tree, learnable_parameters)
         """
         tree: ete3 tree
         trait_means: means of traits, named
-        trait_cov_matrix: correlations between traits, named -- TODO: extend to per-clade trait covariance matrices
+        trait_cov_matrix: covariances between traits, named -- TODO: extend to per-clade trait covariance matrices
         Expanded multivariate Brownian motion model will do trait-major order, i.e. species1_trait1, species2_trait1, species1_trait2, species2_trait2
+        For learning, uses Cholesky decomposition of trait covariance matrix.
         """
         self.trait_means = trait_means # means of traits
         self.trait_cov_matrix = trait_cov_matrix # correlations between traits -- TODO: extend to per-clade trait covariance matrices
@@ -100,7 +102,10 @@ class BrownianMotion(Base):
         ones = np.ones(n)[:, np.newaxis] # row vector of ones
         trait_means = (np.linalg.inv(ones.T @ inv_C @ ones) @ (ones.T @ inv_C @ x)).T
         trait_cov_matrix = (x - ones @ trait_means.T).T @ inv_C @ (x - ones @ trait_means.T) 
-        trait_cov_matrix = trait_cov_matrix / (n-1)
+        if unbiased:
+            trait_cov_matrix = trait_cov_matrix / (n-1)
+        else:
+            trait_cov_matrix = trait_cov_matrix / n
         return trait_means, trait_cov_matrix
 
     def score(self, trait_means, trait_cov_matrix):
@@ -113,18 +118,45 @@ class BrownianMotion(Base):
 
     def set_parameters(self, params):
         self.trait_means = pd.Series(params[0], index=self.trait_means.index)
-        self.trait_cov_matrix = pd.DataFrame(params[1], index=self.trait_cov_matrix.index, columns=self.trait_cov_matrix.columns)
+        L_params = params[1]
+        Lk = build_cholesky(L_params)
+        self.trait_cov_matrix = pd.DataFrame(Lk @ Lk.T, index=self.trait_cov_matrix.index, columns=self.trait_cov_matrix.columns)
 
     def _species_cov(self):
         # ensure JAX array
         return jnp.asarray(self.tree.get_species_cov_matrix().values)
 
-    def logpdf(self, trait_values, params):
-        trait_means, trait_cov = params                       # jnp arrays
-        a = jnp.repeat(trait_means, self.n_species)             # trait-major order
-        V = jnp.kron(trait_cov, self._species_cov())          # (p*n)×(p*n)
-        return tfd.MultivariateNormalFullCovariance(loc=a, covariance_matrix=V).log_prob(trait_values)
+    def _species_cholesky(self):
+        # ensure JAX array
+        return self.tree.get_species_cholesky()
 
     def sample_prior(self, params, rng):
         trait_means, trait_cov = params                       # jnp arrays
-        return tfd.MultivariateNormalFullCovariance(loc=trait_means, covariance_matrix=trait_cov).sample(rng)
+        return tfd.MultivariateNormalFullCovariance(loc=trait_means, covariance_matrix=trait_cov).sample(seed=rng)
+
+    def logpdf_prior(self, trait_values, params):
+        # trait_means, trait_cov = params                       # jnp arrays
+        # a = jnp.repeat(trait_means, self.n_species)             # trait-major order
+        # V = jnp.kron(trait_cov, self._species_cov())          # (p*n)×(p*n)
+        # return tfd.MultivariateNormalFullCovariance(loc=a, covariance_matrix=V).log_prob(trait_values)
+        trait_means, L_params = params             # <- optimize L_params, not K
+        Lk = build_cholesky(L_params)              # trait Cholesky
+        z = jnp.asarray(trait_values)
+        # a = jnp.repeat(trait_means, self.n_species)             # trait-major order
+        # V = jnp.kron(Lk @ Lk.T, self._species_cov())          # (p*n)×(p*n)
+        # return tfd.MultivariateNormalFullCovariance(loc=a, covariance_matrix=V).log_prob(z)        
+        return mvn_kron_logpdf_traitmajor_with_L(z, trait_means, Lk, self._species_cholesky(), self.n_species)        
+
+    # Our custom proposal distribution
+    # Same as prior
+    def sample_proposal(self, params, rng):
+        trait_means, L_params = params             # <- optimize L_params, not K
+        Lk = build_cholesky(L_params)              # trait Cholesky
+        return sample_mvnormal_kron_traitmajor(rng, self._species_cholesky(), Lk, trait_means)
+
+    # Same as prior
+    def logpdf_proposal(self, trait_values, params):
+        trait_means, L_params = params             # <- optimize L_params, not K
+        Lk = build_cholesky(L_params)              # trait Cholesky
+        z = jnp.asarray(trait_values)
+        return mvn_kron_logpdf_traitmajor_with_L(z, trait_means, Lk, self._species_cholesky(), self.n_species)   
