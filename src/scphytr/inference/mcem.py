@@ -1,12 +1,8 @@
-import numpy as np
-
 import jax.numpy as jnp
 import jax
 import optax
 from functools import partial
 from tqdm import tqdm
-
-from src.scphytr import observation_models
 
 from .base import BaseInference
 
@@ -83,12 +79,10 @@ class MCEM(BaseInference):
         self.trace = []
         self.esss = []
         pbar = tqdm(range(n_steps), desc=f"MCEM on {self.trait_model.__class__.__name__}")
-        weights, proposal_samples = self.sample_and_compute_weights(n_samples, params, rng, observed_trait_values)
         for _ in pbar:
             rng, rng_new = jax.random.split(rng)
             # Sample from proposal distribution
             weights, proposal_samples = self.sample_and_compute_weights(n_samples, params, rng_new, observed_trait_values)
-            # print(weights)
             # Take M-step with importance weights
             opt_state = self.opt.init(params)
             for i in range(n_m_steps):
