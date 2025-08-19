@@ -2,5 +2,6 @@
 from .pic import PIC
 from .ml import ML
 from .mcem import MCEM
+from .vbem import VBEM
 
-__all__ = ['PIC', 'ML', 'MCEM']
+__all__ = ['PIC', 'ML', 'MCEM', 'VBEM']
