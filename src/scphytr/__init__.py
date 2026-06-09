@@ -9,6 +9,14 @@ from . import trait_models
 
 # Make commonly used classes available directly
 from .utils.tree import Tree
+from .inference import (
+    LaplaceEStep, ImportanceSamplingEStep, MCMCEStep, resolve_estep,
+)
+
+# Scanpy-style short aliases (see README usage examples).
+tl = tools
+pp = preprocessing
+pl = plotting
 
 __version__ = "0.0.0"
 __all__ = [
@@ -20,4 +28,11 @@ __all__ = [
     "tools",
     "trait_models",
     "Tree",
+    "tl",
+    "pp",
+    "pl",
+    "LaplaceEStep",
+    "ImportanceSamplingEStep",
+    "MCMCEStep",
+    "resolve_estep",
 ]

@@ -1,8 +1,10 @@
 import numpy as np
 import pandas as pd
 from scipy.stats import multivariate_normal
+import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
+import tensorflow.linalg as tfl
 
 from .base import BaseTraitModel
 from ..utils.jax_utils import build_cholesky, mvn_kron_logpdf_traitmajor_with_L, sample_mvnormal_kron_traitmajor
@@ -111,10 +113,22 @@ class BrownianMotion(BaseTraitModel):
     def score(self, trait_means, trait_cov_matrix):
         a = np.repeat(trait_means, self.n_species)  # trait-major order: species1_trait1, species2_trait1, species1_trait2, species2_trait2
         V = np.kron(trait_cov_matrix, self.tree.get_species_cov_matrix()) 
-        return multivariate_normal.logpdf(self.tree.get_trait_values(), a, V)
+        y = self.reshape_trait_values(self.tree.get_trait_values())
+        return multivariate_normal.logpdf(y, a, V)
+
+    def score_pruning(self, trait_means, trait_cov_matrix):
+        """Linear-time equivalent of ``score`` via Felsenstein's pruning.
+
+        Computes the same homogeneous-BM marginal log-likelihood as ``score`` but
+        in O(n) over the tree, without forming the dense K ⊗ C covariance.
+        """
+        from ..utils.pruning import bm_pruning_logpdf
+        return bm_pruning_logpdf(self.tree, np.asarray(trait_means).ravel(), trait_cov_matrix)
 
     def sample_parameters(self):
-        return self.trait_means.values.ravel(), np.eye(self.trait_cov_matrix.shape[0])
+        free_cholesky = np.linalg.cholesky(self.trait_cov_matrix)
+        free_cholesky = np.tril(free_cholesky, -1) + np.diag(np.log(np.diag(free_cholesky)))
+        return self.trait_means.values.ravel(), free_cholesky # optimize Cholesky
 
     def set_parameters(self, params):
         self.trait_means = pd.Series(params[0], index=self.trait_means.index)
@@ -147,7 +161,7 @@ class BrownianMotion(BaseTraitModel):
         # return tfd.MultivariateNormalFullCovariance(loc=a, covariance_matrix=V).log_prob(z)        
         return mvn_kron_logpdf_traitmajor_with_L(z, trait_means, Lk, self._species_cholesky(), self.n_species)        
 
-    # Our custom proposal distribution
+    # Our custom proposal distribution for Importance Sampling
     # Same as prior
     def sample_proposal(self, params, rng):
         trait_means, L_params = params             # <- optimize L_params, not K
@@ -160,3 +174,103 @@ class BrownianMotion(BaseTraitModel):
         Lk = build_cholesky(L_params)              # trait Cholesky
         z = jnp.asarray(trait_values)
         return mvn_kron_logpdf_traitmajor_with_L(z, trait_means, Lk, self._species_cholesky(), self.n_species)   
+
+    # # Our custom proposal distribution for Variational Inference
+    # # Mean-field: nxp means, nxp variances, no correlations
+    # def sample_variational_parameters(self):
+    #     return jnp.zeros(self.trait_means.shape[0]*self.n_species), jnp.zeros(self.trait_means.shape[0]*self.n_species)
+    #     # a = np.ones(self.trait_means.shape[0]*self.n_species) * 10.
+    #     # a[self.n_species:] = -10.
+    #     # v = np.zeros(self.trait_means.shape[0]*self.n_species)
+    #     # v[:self.n_species] = jnp.log(.1)
+    #     # v[self.n_species:] = jnp.log(1.)
+    #     # return jnp.array(a), jnp.array(v)
+
+    # def set_variational_parameters(self, variational_params):
+    #     self.variational_params = variational_params
+
+    # def sample_variational_proposal(self, variational_params, rng):
+    #     trait_means, log_trait_variances = variational_params
+    #     trait_variances = jnp.exp(log_trait_variances)
+    #     return tfd.MultivariateNormalDiag(loc=trait_means, scale_diag=trait_variances).sample(seed=rng)
+
+    # def logpdf_variational_proposal(self, trait_values, variational_params):
+    #     trait_means, log_trait_variances = variational_params
+    #     trait_variances = jnp.exp(log_trait_variances)
+    #     return tfd.MultivariateNormalDiag(loc=trait_means, scale_diag=trait_variances).log_prob(trait_values)
+
+    # def kl_divergence(self, trait_params, variational_params):
+    #     # TODO: optimize this to avoid forming the Kronecker product
+    #     trait_means, L_params = trait_params
+    #     Lk = build_cholesky(L_params)
+    #     a = jnp.repeat(trait_means, self.n_species)             # trait-major order
+    #     V = jnp.kron(Lk @ Lk.T, self._species_cov())          # (p*n)×(p*n)
+    #     variational_means, log_variational_variances = variational_params # p*n
+    #     variational_variances = jnp.exp(log_variational_variances)
+    #     return tfd.MultivariateNormalDiag(loc=variational_means, scale_diag=variational_variances).kl_divergence(tfd.MultivariateNormalFullCovariance(loc=a, covariance_matrix=V))
+
+    # Structured VI: nxp means, pxp trait covariances (cholesky)
+    def sample_variational_parameters(self):
+        return jnp.zeros((self.n_species, self.trait_means.shape[0])), jnp.zeros((self.trait_means.shape[0], self.trait_means.shape[0]))
+        # a = np.ones(self.trait_means.shape[0]*self.n_species) * 10.
+        # a[self.n_species:] = -10.
+        # v = np.zeros(self.trait_means.shape[0]*self.n_species)
+        # v[:self.n_species] = jnp.log(.1)
+        # v[self.n_species:] = jnp.log(1.)
+        # return jnp.array(a), jnp.array(v)
+
+    def set_variational_parameters(self, variational_params):
+        self.variational_params = variational_params
+
+    def sample_variational_proposal(self, variational_params, rng):
+        variational_means, variational_cholesky = variational_params
+        variational_cholesky = build_cholesky(variational_cholesky)
+        Xi = jax.random.normal(rng, shape=(self.n_species, self.n_traits))
+
+        # Z = M + Lc Xi Lq^T
+        Z = variational_means + self._species_cholesky() @ Xi @ variational_cholesky.T
+        return Z
+
+
+    def logpdf_variational_proposal(self, trait_values, variational_params):
+        variational_means, variational_cholesky = variational_params
+        variational_cholesky = build_cholesky(variational_cholesky)
+
+        M, variational_cholesky = variational_params
+        Lq = build_cholesky(variational_cholesky)
+        Sq = Lq @ Lq.T
+        n, p = trait_values.shape
+
+        diff = trait_values - M
+        # Mahalanobis term: tr(Sq^{-1} diff^T C^{-1} diff)
+        Sq_inv = jnp.linalg.inv(Sq)
+        mahal = jnp.trace(Sq_inv @ (diff.T @ self._species_cov_inv() @ diff))
+
+        logdet_Sq = 2.0 * jnp.sum(jnp.log(jnp.diag(jnp.linalg.cholesky(Sq))))
+        logdet_C  = 2.0 * jnp.sum(jnp.log(jnp.diag(self._species_cholesky())))
+
+        logpdf = -0.5 * (n*p*jnp.log(2*jnp.pi) + n*logdet_Sq + p*logdet_C + mahal)
+        return logpdf
+
+
+        op = tfl.LinearOperatorKronecker([
+            tfl.LinearOperatorLowerTriangular(variational_cholesky),   # column factor
+            tfl.LinearOperatorLowerTriangular(self._species_cholesky()),   # row factor
+        ])
+        loc = jnp.reshape(variational_means, [-1])                    # vec(M)
+        return tfd.MultivariateNormalLinearOperator(loc=loc, scale=op).log_prob(trait_values)
+
+    def kl_divergence(self, trait_params, variational_params):
+        # TODO: optimize this to avoid forming the Kronecker product
+        trait_means, L_params = trait_params
+        Lk = build_cholesky(L_params)
+        a = jnp.repeat(trait_means, self.n_species)             # trait-major order
+        V = jnp.kron(Lk @ Lk.T, self._species_cov())          # (p*n)×(p*n)
+        variational_means, variational_cholesky = variational_params # p*n
+        variational_cholesky = build_cholesky(variational_cholesky)
+        op = tfl.LinearOperatorKronecker([
+            tfl.LinearOperatorLowerTriangular(variational_cholesky),   # column factor
+            tfl.LinearOperatorLowerTriangular(self._species_cholesky()),   # row factor
+        ])
+        loc = jnp.reshape(variational_means, [-1])                    # vec(M)
+        return tfd.MultivariateNormalLinearOperator(loc=loc, scale=op).kl_divergence(tfd.MultivariateNormalFullCovariance(loc=a, covariance_matrix=V))

@@ -1,5 +1,7 @@
 # scPhyTr
-Phylogenetic comparative methods for single-cell gene expression data. `scPhyTr` implements Brownian Motion, Ornstein-Uhlenbeck and peak-shift model fitting algorithms for single-cell phylogenies and gene expression data to infer evolutionary rates of genes or pathways, evolutionary correlations, and clade-specific rate variation. scPhyTr may also take known covariates to infer covariate-driven rate changes. Additionally, if spatial data is available, scPhyTr can identify niches with different evolutionary rates for any trait de novo. 
+Phylogenetic comparative methods for single-cell gene expression data. `scPhyTr` implements Brownian Motion, Ornstein-Uhlenbeck and peak-shift model fitting algorithms for single-cell phylogenies and gene expression data to infer evolutionary rates of genes or pathways, evolutionary correlations, and clade-specific rate variation. scPhyTr may also take known covariates to infer covariate-driven rate changes. Additionally, if spatial data is available, scPhyTr can identify niches with different evolutionary rates for any trait de novo.
+
+Testing hypothesis about spatial effects of trait evolution?
 
 Comparing to RevBayes, scPhyTr is tailored for the specificities of single-cell data, and extends its functionality to include variation in evolutionary rates in unknown clades, as well as the ability to extract covariates from spatial data to associate with rate variations.
 
@@ -23,6 +25,9 @@ ph.tl.estimate_state_rates(adata, state=) # Populates the adata.uns with a rate 
 ph.tl.estimate_evolutionary_correlation(adata, characters=) # Populates the adata.uns with a correlation matrix for the specified characters
 ph.tl.estimate_evolutionary_optimum(adata, character=) # Populates the adata.uns with an evolutionary optimal value for the specified character using an OU model
 ph.tl.estimate_lineage_evolutionary_optima(adata, character=, lineage=) # Populates the adata.uns with an evolutionary optimal value for the specified character using an OU model in each lineage
+ph.tl.detect_adaptive_genes(adata, model=) # for every gene, fit a OU-1, OU-2 and a BM process and perform model selection
+ph.tl.detect_adaptive_traits(adata, obsm_layer=, model=) # same but for traits (columns in .obsm)
+
 
 ph.pl.trait_value(adata, color=[]) # colors the branches with the value of a trait, one trait per facet
 ph.pl.trait_value(adata, color=[], state=) # same as above, but also highlights state changes in the tr

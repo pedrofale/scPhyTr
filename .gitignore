@@ -1,0 +1,12 @@
+__pycache__/
+
+# matplotlib cache used by docs/figures/make_figures.py
+docs/figures/.mplcache/
+
+EvoGeneX/
+
+nongenomic-evolution-of-tumor-subclones/
+
+scphytr.egg-info/
+
+.DS_Store
