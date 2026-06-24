@@ -107,6 +107,137 @@ class GaussianObservation:
         return self.y_obs.copy()
 
 
+class MultiCellPoissonObservation:
+    """Multiple cell counts per tree leaf (e.g. cells within a subclone).
+
+    The leaves of the tree are *subclones* (or any aggregate); each leaf carries
+    several cells. Every cell ``i`` assigned to leaf ``leaf_index[i]`` is observed
+    as ``Y_i ~ Poisson(S_i e^{z_leaf + eps_i})`` and the latent lives at the leaf,
+    so this exposes the standard observation interface on the **leaf**-latent
+    ``F`` of shape ``(n_leaves, p)`` -- summing/scattering each leaf's cells.
+
+    Two regimes (the modeling point of subclone-resolution lineages):
+
+    - ``dispersion is None`` -- *pure Poisson* (``eps_i = 0``): cells are exact
+      replicates of the subclone latent. The sufficient statistics collapse, so
+      this is identical (in grad/curvature) to :class:`PoissonObservation` on the
+      per-leaf **summed** counts and offsets -- i.e. summed-count pseudobulk.
+    - ``dispersion = r`` (per-gene NB size, scalar or ``(p,)``) -- a within-leaf
+      **Gamma-Poisson** overdispersion that does *not* collapse: it models
+      genuine intra-subclone heterogeneity (plasticity) beyond shot noise, the
+      count-level analogue of the EVE within-population variance. ``r -> inf``
+      recovers pure Poisson. (Gamma-Poisson is the closed-form stand-in for a
+      per-cell log-normal ``eps_i ~ N(0, D)``; both add a per-cell random effect.)
+
+    Parameters
+    ----------
+    counts : array (n_cells, p)        -- per-cell counts.
+    offsets : array (n_cells,) or (n_cells, p) -- per-cell size factors S_i > 0.
+    leaf_index : int array (n_cells,)  -- leaf each cell belongs to, in [0, n_leaves).
+    n_leaves : int                     -- number of tree leaves.
+    dispersion : None | float | array (p,) -- NB size r per gene; None => Poisson.
+    """
+
+    def __init__(self, counts, offsets, leaf_index, n_leaves, dispersion=None,
+                 univariate=False):
+        self.y = np.asarray(counts, dtype=float)
+        if self.y.ndim == 1:
+            self.y = self.y[:, None]
+        n_cells, p = self.y.shape
+        # ``univariate`` makes mode_init return a 1-D (n_leaves,) array so the
+        # fast scalar tree-Laplace path (``tree_laplace.py``) can be used for a
+        # single gene; loglik/grad/neg_hess already adapt to 1-D vs 2-D input.
+        self.univariate = bool(univariate) and p == 1
+        S = np.asarray(offsets, dtype=float)
+        if S.ndim == 1:
+            S = S[:, None]
+        self.S = S * np.ones_like(self.y)
+        if np.any(self.S <= 0):
+            raise ValueError("Poisson offsets S must be positive.")
+        self.idx = np.asarray(leaf_index, dtype=int)
+        if self.idx.shape[0] != n_cells:
+            raise ValueError("leaf_index must have one entry per cell.")
+        self.n_leaves = int(n_leaves)
+        self.p = p
+        self.r = None if dispersion is None else np.broadcast_to(
+            np.asarray(dispersion, dtype=float), (p,)).copy()
+        # Per-leaf summed sufficient statistics (for mode_init and the pure case).
+        self.Ytot = np.zeros((self.n_leaves, p))
+        self.Stot = np.zeros((self.n_leaves, p))
+        np.add.at(self.Ytot, self.idx, self.y)
+        np.add.at(self.Stot, self.idx, self.S)
+
+    def _mu(self, f):
+        # per-cell mean: mu_i = S_i exp(f_{leaf(i)}). ``f`` may be (n_leaves,)
+        # (univariate/scalar tree-Laplace path) or (n_leaves, p) (multivariate).
+        f2 = f[:, None] if f.ndim == 1 else f
+        return self.S * np.exp(f2[self.idx])
+
+    def loglik(self, f):
+        mu = self._mu(f)
+        y = self.y
+        if self.r is None:
+            return float(np.sum(y * np.log(mu) - mu - gammaln(y + 1.0)))
+        r = self.r[None, :]
+        return float(np.sum(
+            gammaln(y + r) - gammaln(r) - gammaln(y + 1.0)
+            + r * np.log(r / (r + mu)) + y * np.log(mu / (r + mu))))
+
+    def grad(self, f):
+        mu = self._mu(f)
+        if self.r is None:
+            g_cell = self.y - mu                       # d/df, f shared within leaf
+        else:
+            r = self.r[None, :]
+            g_cell = self.y - (self.y + r) * mu / (r + mu)
+        out = np.zeros((self.n_leaves, self.p))
+        np.add.at(out, self.idx, g_cell)
+        return out[:, 0] if f.ndim == 1 else out
+
+    def neg_hess_diag(self, f):
+        mu = self._mu(f)
+        if self.r is None:
+            w_cell = mu                                # -d^2/df^2 = S e^f
+        else:
+            r = self.r[None, :]
+            w_cell = (self.y + r) * mu * r / (r + mu) ** 2
+        out = np.zeros((self.n_leaves, self.p))
+        np.add.at(out, self.idx, w_cell)
+        return out[:, 0] if f.ndim == 1 else out
+
+    def mode_init(self):
+        m = np.log((self.Ytot + 0.5) / (self.Stot + 1e-9))
+        return m[:, 0] if self.univariate else m
+
+    def update_dispersion(self, f, bounds=(1e-2, 1e6)):
+        """Re-estimate the per-gene NB size ``r`` at fixed leaf latent ``f``.
+
+        This is the *observation* M-step of the EM: with the subclone latents
+        held at the current posterior mode ``f`` (so the per-cell means
+        ``mu = S_i e^{f_leaf}`` are fixed), maximize the within-leaf Gamma-Poisson
+        log-likelihood over the dispersion ``r_g`` for each gene -- the standard
+        NB-dispersion MLE. Mutates and returns ``self.r``. The estimated ``r_g``
+        is the within-subclone (plastic) overdispersion, complementary to the
+        heritable diffusion ``K`` estimated by the latent M-step.
+        """
+        from scipy.optimize import minimize_scalar
+        mu = self._mu(f)
+        r_new = np.empty(self.p)
+        lo, hi = np.log(bounds[0]), np.log(bounds[1])
+        for g in range(self.p):
+            y = self.y[:, g]; m = mu[:, g]
+
+            def nll(logr, y=y, m=m):
+                r = np.exp(logr)
+                return -float(np.sum(gammaln(y + r) - gammaln(r)
+                                     + r * np.log(r / (r + m)) + y * np.log(m / (r + m))))
+
+            res = minimize_scalar(nll, bounds=(lo, hi), method="bounded")
+            r_new[g] = np.exp(res.x)
+        self.r = r_new
+        return r_new
+
+
 def laplace_posterior(obs, mean, Sigma, max_iter=100, tol=1e-8, f_clip=40.0):
     """Laplace approximation: posterior mode, marginal log-likelihood, covariance.
 

@@ -102,9 +102,41 @@ def _pack_L(K, p):
     return v
 
 
+def _factor_analyze_cov(C, k, iters=500, tol=1e-9):
+    """ML factor analysis of a covariance: ``C ~ W W^T + diag(d)`` (rank-k + diagonal).
+
+    Classic Rubin-Thayer EM on a sample covariance ``C`` (p x p). Returns
+    ``(W, d)`` with ``W`` (p, k) and ``d`` (p,) > 0. Used as the constrained
+    M-step for a factor-structured latent diffusion ``K = W W^T + diag(d)``.
+    """
+    C = np.asarray(C, dtype=float)
+    p = C.shape[0]
+    diagC = np.clip(np.diag(C), 1e-8, None)
+    w, V = np.linalg.eigh(0.5 * (C + C.T))
+    w = np.clip(w, 1e-8, None)
+    W = V[:, -k:] * np.sqrt(w[-k:])[None, :]
+    d = np.maximum(diagC - np.sum(W ** 2, axis=1), 1e-4 * diagC)
+    Ik = np.eye(k)
+    prev = None
+    for _ in range(iters):
+        dinv = 1.0 / d
+        WtDinv = W.T * dinv[None, :]                 # (k, p)
+        M = Ik + WtDinv @ W                          # (k, k)
+        beta = np.linalg.solve(M, WtDinv)            # (k, p) = E[x | y]
+        CbT = C @ beta.T                             # (p, k)
+        Ezz = Ik - beta @ W + beta @ CbT             # (k, k)
+        W = np.linalg.solve(Ezz.T, CbT.T).T          # (p, k) = CbT Ezz^{-1}
+        d = np.maximum(diagC - np.sum(W * CbT, axis=1), 1e-6 * diagC)
+        K = W @ W.T + np.diag(d)
+        if prev is not None and np.max(np.abs(K - prev)) < tol:
+            break
+        prev = K
+    return W, d
+
+
 def fit_mv_em(tree, obs, model="BM", trait_names=None, regimes=None,
               max_em=50, tol=1e-4, alpha0=1.0, mstep_maxiter=200, verbose=False,
-              estep="laplace"):
+              estep="laplace", k_factor=None, fit_dispersion=False):
     """Fit latent multivariate BM/OU under any observation model via Laplace-EM.
 
     Parameters
@@ -119,13 +151,24 @@ def fit_mv_em(tree, obs, model="BM", trait_names=None, regimes=None,
         (default), ``"is"`` (importance sampling), ``"mcmc"`` (blackjax NUTS), or
         an engine instance with a ``run(...)`` method. Only the E-step changes;
         the JAX-gradient M-step is identical across engines.
+    k_factor : int, optional
+        If set, constrain the diffusion to a low-rank-plus-diagonal
+        ``K = W W^T + diag(d)`` with ``k_factor`` factors -- the count analogue of
+        phylogenetic factor analysis with a per-gene *idiosyncratic heritable*
+        term. The M-step then fits this structure (by factor-analyzing the E-step
+        increment covariance) instead of an unconstrained ``K``. BM single-regime
+        only. This regularizes the gene-gene covariance (fewer parameters) while
+        keeping the full p-dim latent (so the cost is still O(n p^3)).
 
     Returns
     -------
     FittedMVModel -- ``K`` is the latent diffusion matrix; ``correlation()`` gives
-    the evolutionary correlations between genes.
+    the evolutionary correlations between genes. When ``k_factor`` is set the
+    loadings and idiosyncratic variances are returned in ``extra``.
     """
     is_ou = model == "OU"
+    if k_factor is not None and (is_ou or regimes is not None):
+        raise NotImplementedError("k_factor supports BM with a single regime only.")
     engine = resolve_estep(estep)
     init = obs.mode_init()
     p = init.shape[1]
@@ -150,6 +193,12 @@ def fit_mv_em(tree, obs, model="BM", trait_names=None, regimes=None,
                         regimes=regimes, root_value=theta[root_regime])
         M, Z, Sig, cross = es["M"], es["Z"], es["Sigma"], es["cross"]
 
+        # ---- observation M-step: re-estimate the within-leaf dispersion ----
+        # Splits each gene's variance into heritable (K, latent M-step below) and
+        # plastic (within-subclone overdispersion ``r``) at the current mode.
+        if fit_dispersion and hasattr(obs, "update_dispersion"):
+            obs.update_dispersion(Z[M.leaf_node_idx])
+
         m_pa = np.zeros_like(Z)
         Sig_pa = np.zeros((M.N, p, p))
         for i in range(M.N):
@@ -165,15 +214,36 @@ def fit_mv_em(tree, obs, model="BM", trait_names=None, regimes=None,
             "regime": jnp.asarray(M.regime_idx), "root_mask": jnp.asarray(M.is_root),
         }
 
-        # ---- M-step: maximize Q via JAX-gradient BFGS ----
-        neg_Q, split = _make_mstep_objective(moments, p, n_reg, is_ou)
-        head = [np.log(max(alpha, 1e-4))] if is_ou else []
-        x0 = jnp.asarray(np.concatenate([np.array(head), theta.reshape(-1), _pack_L(K, p)]))
-        res = jax_minimize(neg_Q, x0, method="BFGS", options={"maxiter": mstep_maxiter})
-        alpha_n, theta_n, L = split(res.x)
-        alpha = float(alpha_n) if is_ou else 0.0
-        theta = np.asarray(theta_n, dtype=float)
-        K = np.asarray(L @ L.T, dtype=float)
+        if k_factor is not None:
+            # ---- constrained M-step: K = W W^T + diag(d) (BM, single regime) ----
+            # theta MLE is the root posterior mean; K via factor analysis of the
+            # expected per-edge (BM increment) covariance C_hat = (sum_e M_e/v_e)/N.
+            theta = Z[M.root_idx].reshape(1, p)
+            G = np.zeros((p, p))
+            n_free = 0
+            for i in range(M.N):
+                if not M.free[i]:
+                    continue
+                if M.is_root[i]:
+                    Me = Sig[i] + np.outer(Z[i] - theta[0], Z[i] - theta[0])
+                else:
+                    dz = Z[i] - Z[M.parent[i]]
+                    Me = (Sig[i] - cross[i] - cross[i].T + Sig_pa[i] + np.outer(dz, dz))
+                G += Me / M.t[i]
+                n_free += 1
+            Chat = G / max(n_free, 1)
+            Wfa, dfa = _factor_analyze_cov(Chat, k_factor)
+            K = Wfa @ Wfa.T + np.diag(dfa)
+        else:
+            # ---- M-step: maximize Q via JAX-gradient BFGS (unconstrained K) ----
+            neg_Q, split = _make_mstep_objective(moments, p, n_reg, is_ou)
+            head = [np.log(max(alpha, 1e-4))] if is_ou else []
+            x0 = jnp.asarray(np.concatenate([np.array(head), theta.reshape(-1), _pack_L(K, p)]))
+            res = jax_minimize(neg_Q, x0, method="BFGS", options={"maxiter": mstep_maxiter})
+            alpha_n, theta_n, L = split(res.x)
+            alpha = float(alpha_n) if is_ou else 0.0
+            theta = np.asarray(theta_n, dtype=float)
+            K = np.asarray(L @ L.T, dtype=float)
 
         ll = mv_tree_laplace_marginal(tree, obs, alpha if is_ou else 0.0, theta_arg(theta), K,
                                       regimes=regimes, root_value=theta[root_regime])
@@ -185,9 +255,17 @@ def fit_mv_em(tree, obs, model="BM", trait_names=None, regimes=None,
         prev_ll = ll
 
     n = len(tree.root.get_leaves())
-    n_params = (1 if is_ou else 0) + n_reg * p + n_L
+    if k_factor is not None:
+        n_params = p + (p * k_factor - k_factor * (k_factor - 1) // 2) + p   # theta + W (less rotation) + d
+        extra = {"n_regimes": n_reg, "em_iters": it + 1,
+                 "k_factor": k_factor, "W": Wfa, "d": dfa}
+    else:
+        n_params = (1 if is_ou else 0) + n_reg * p + n_L
+        extra = {"n_regimes": n_reg, "em_iters": it + 1}
+    if fit_dispersion and getattr(obs, "r", None) is not None:
+        extra["dispersion"] = np.asarray(obs.r)
     theta_out = (theta if regimes is not None else theta[0]) if is_ou else None
     return FittedMVModel("OU" if is_ou else "BM", list(trait_names), loglik=float(prev_ll),
                          n_params=n_params, n_obs=n, mu=theta[0].copy(), K=K,
                          alpha=(alpha if is_ou else None), theta=theta_out,
-                         extra={"n_regimes": n_reg, "em_iters": it + 1})
+                         extra=extra)
