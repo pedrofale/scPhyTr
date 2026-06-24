@@ -151,8 +151,24 @@ class _MVTreeModel:
                 total += self.invV[i] * float(d @ P @ d)
         return total
 
+    def _obs_block(self, W, i):
+        """Per-node observation curvature as a (p, p) block.
+
+        Accepts ``W`` shaped either (N, p) -- a diagonal curvature, as exposed by
+        observation models whose leaf likelihood factorizes over the p latent
+        coordinates -- or (N, p, p) -- a full block, as needed when the leaf
+        likelihood couples the latent coordinates (e.g. a low-rank factor model
+        where a gene loads on several latent factors).
+        """
+        Wi = W[i]
+        return np.diag(Wi) if Wi.ndim == 1 else Wi
+
     def _eliminate(self, Wdiag, rhs=None):
-        """Block postorder elimination of (Q + diag(W)); returns (cho, rr, logdet)."""
+        """Block postorder elimination of (Q + W); returns (cho, rr, logdet).
+
+        ``Wdiag`` is the observation curvature, either (N, p) diagonal or
+        (N, p, p) full blocks (see :meth:`_obs_block`).
+        """
         P = self.P
         D = {}
         cho = {}
@@ -163,7 +179,7 @@ class _MVTreeModel:
             if not self.free[i]:
                 continue
             if i not in D:
-                D[i] = self.diag_coef[i] * P + np.diag(Wdiag[i])
+                D[i] = self.diag_coef[i] * P + self._obs_block(Wdiag, i)
             ch = cho_factor(D[i], lower=True)
             cho[i] = ch
             log_det += 2.0 * float(np.sum(np.log(np.diag(ch[0]))))
@@ -171,7 +187,7 @@ class _MVTreeModel:
             if pp >= 0:
                 o = self.off[i]
                 if pp not in D:
-                    D[pp] = self.diag_coef[pp] * P + np.diag(Wdiag[pp])
+                    D[pp] = self.diag_coef[pp] * P + self._obs_block(Wdiag, pp)
                 # Schur complement: -o^2 P (D_i)^{-1} P  (off block = o P).
                 D[pp] = D[pp] - o * o * (P @ cho_solve(ch, P))
                 if rr is not None:

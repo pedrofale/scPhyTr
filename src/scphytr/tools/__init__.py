@@ -24,6 +24,23 @@ from .estimation import (
     cov_to_corr,
 )
 from .em import fit_mv_em
+from .factor_analysis import (
+    FittedFactorModel,
+    FittedDynamicFactorModel,
+    fit_factor_analysis,
+    fit_phylo_factor_analysis,
+    simulate_pfa,
+    detect_factor_dynamics,
+    classify_factor_dynamics,
+    subspace_error,
+    principal_angles,
+    procrustes_align,
+)
+from .poisson_factor import (
+    FittedPoissonFactorModel,
+    fit_poisson_factor_analysis,
+    simulate_poisson_pfa,
+)
 
 __all__ = [
     "FittedModel",
@@ -49,4 +66,19 @@ __all__ = [
     "estimate_correlation",
     "estimate_optima",
     "cov_to_corr",
+    # Phylogenetic factor analysis.
+    "FittedFactorModel",
+    "FittedDynamicFactorModel",
+    "fit_factor_analysis",
+    "fit_phylo_factor_analysis",
+    "simulate_pfa",
+    "detect_factor_dynamics",
+    "classify_factor_dynamics",
+    "subspace_error",
+    "principal_angles",
+    "procrustes_align",
+    # Poisson phylogenetic factor analysis (low-rank latent, raw counts).
+    "FittedPoissonFactorModel",
+    "fit_poisson_factor_analysis",
+    "simulate_poisson_pfa",
 ]
