@@ -307,6 +307,12 @@ def fit_mv_latent(tree, obs, model="BM", trait_names=None, regimes=None,
             if best is None or res.fun < best.fun:
                 best = res
 
+    if best is None or not np.isfinite(best.fun) or best.fun >= 1e18:
+        raise ValueError(
+            "fit_mv_latent: no finite marginal at any optimizer step -- the fit "
+            "did not move off its initialization. Common cause: zero-length tree "
+            "branches (the latent model needs positive branch lengths).")
+
     alpha, thetas, K = split(best.x)
     n_params = (1 if is_ou else 0) + n_theta + n_L
     n = len(tree.root.get_leaves())

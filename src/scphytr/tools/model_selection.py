@@ -187,7 +187,10 @@ def fit_bm_counts(tree, obs, restarts=2, seed=0):
 
     def nll(p):
         mu, log_s2 = p
-        ll = latent_tree_laplace_marginal(tree, obs, 0.0, mu, np.exp(log_s2), root_value=mu)
+        try:
+            ll = latent_tree_laplace_marginal(tree, obs, 0.0, mu, np.exp(log_s2), root_value=mu)
+        except (np.linalg.LinAlgError, ValueError):
+            return 1e18                       # degenerate (e.g. sigma2 -> 0); prune
         return -ll if np.isfinite(ll) else 1e18
 
     rng = np.random.default_rng(seed)
@@ -215,8 +218,11 @@ def fit_ou_counts(tree, obs, alpha_inits=(0.1, 1.0, 5.0), seed=0):
     def nll(p):
         alpha = float(np.clip(np.exp(p[0]), 1e-4, alpha_max))
         theta, log_s2 = p[1], p[2]
-        ll = latent_tree_laplace_marginal(tree, obs, alpha, theta, np.exp(log_s2),
-                                          root_value=theta)
+        try:
+            ll = latent_tree_laplace_marginal(tree, obs, alpha, theta, np.exp(log_s2),
+                                              root_value=theta)
+        except (np.linalg.LinAlgError, ValueError):
+            return 1e18
         return -ll if np.isfinite(ll) else 1e18
 
     var0 = max(np.var(ydata), 1e-3)
@@ -247,8 +253,11 @@ def fit_ou_regimes_counts(tree, obs, regimes, n_regimes,
         alpha = float(np.clip(np.exp(p[0]), 1e-4, alpha_max))
         thetas = np.asarray(p[1:1 + n_regimes], dtype=float)
         log_s2 = p[-1]
-        ll = latent_tree_laplace_marginal(tree, obs, alpha, thetas, np.exp(log_s2),
-                                          regimes=regimes, root_value=thetas[root_regime])
+        try:
+            ll = latent_tree_laplace_marginal(tree, obs, alpha, thetas, np.exp(log_s2),
+                                              regimes=regimes, root_value=thetas[root_regime])
+        except (np.linalg.LinAlgError, ValueError):
+            return 1e18
         return -ll if np.isfinite(ll) else 1e18
 
     var0 = max(np.var(ydata), 1e-3)

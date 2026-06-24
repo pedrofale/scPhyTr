@@ -98,7 +98,9 @@ class Tree(object):
     def load_newick(self, tree_file):
         self.phylotree = PhyloTree(tree_file)
         self.root = self.phylotree.get_tree_root()
-        self.make_species_cov_matrix()
+        # The dense species covariance is a validation-only oracle and does not
+        # support multifurcating (polytomous) trees; build it lazily via the
+        # getters so the O(n) pruning path works on any tree topology.
     
     def save_newick(self, tree_file):
         self.phylotree.write(format=1, outfile=tree_file)
