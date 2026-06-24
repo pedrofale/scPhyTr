@@ -1,4 +1,4 @@
-"""Generate the figures and the running-example numbers used in docs/methods.md.
+"""Generate the figures and the running-example numbers used in docs/01_methods.md.
 
 Outputs (into docs/figures/):
   * precision_vs_covariance.png  -- sparse tree precision Q vs dense covariance Q^{-1}
@@ -157,7 +157,7 @@ def figure_confounding(n_sims=400):
     plt.close(fig)
 
     print(f"[fig] wrote {out}")
-    print("\n==== CONFOUNDING NUMBERS (copy into methods.md) ====")
+    print("\n==== CONFOUNDING NUMBERS (copy into 01_methods.md) ====")
     for tag, naive, contrast, truth in [("rho_K=0.0", n0, c0, 0.0),
                                         ("rho_K=0.8", n8, c8, 0.8)]:
         print(f"{tag}: naive  mean={naive.mean():+.3f} sd={naive.std():.3f} "
@@ -239,7 +239,7 @@ def run_example():
     plt.close(fig)
 
     print(f"[fig] wrote {out}")
-    print("\n==== RUNNING-EXAMPLE NUMBERS (copy into methods.md) ====")
+    print("\n==== RUNNING-EXAMPLE NUMBERS (copy into 01_methods.md) ====")
     print(f"n_leaves           = {n}")
     print(f"Gaussian limit     : naive-tip corr = {r_naive_g:+.3f} (true 0.70), "
           f"contrast-MLE corr = {r_closed:+.3f}, "

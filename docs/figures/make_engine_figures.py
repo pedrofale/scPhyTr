@@ -1,4 +1,4 @@
-"""Figure for docs/inference_engines.md: three E-step engines on one posterior.
+"""Figure for docs/02_inference_engines.md: three E-step engines on one posterior.
 
 At a fixed eta on the Poisson/BM running example we compare, for one latent
 node, the posterior marginal as approximated by (i) the Laplace Gaussian,

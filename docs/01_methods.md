@@ -429,6 +429,25 @@ implemented as
 
 The marginal is assembled exactly as in (6.2) with these block quantities. **Oracles** (`scripts/validate_mv.py`): $`p=1`$ reduces exactly to §6; Gaussian observations match the dense $`\mathcal N(\text{mean},\,C\otimes K+\text{noise})`$ to $`\sim10^{-13}`$ for $`p=2,3`$ on both BM and OU.
 
+### 7.4 Low-rank latents: factor models for many genes
+
+The cost in §7.2 is $`O(np^3)`$ — cubic in the gene dimension. For a transcriptome ($`p`$ in the
+hundreds–thousands) this is infeasible, and a full $`p\times p`$ $`K`$ has $`O(p^2)`$ parameters to
+boot. The remedy is to make the latent **low-rank**: instead of a $`p`$-vector per node, carry a
+$`k`$-vector of **latent factors** ($`k\ll p`$), each an independent BM (prior precision
+$`A\otimes I_k`$), and read the genes off through a loading matrix $`W\in\mathbb R^{p\times k}`$, so
+the induced gene diffusion is the rank-$`k`$ matrix $`K=WW^\top`$.
+
+The *entire* block machinery of §7 carries over with the latent dimension set to $`k`$ rather than
+$`p`$ — cost $`O(Nk^3)`$. There is exactly **one** generalization. With a $`p`$-gene latent the
+observation was conditionally independent across genes, so the leaf curvature $`W`$ was *diagonal*
+(§3.1). With a $`k`$-factor latent a single gene loads on all $`k`$ factors, so the leaf curvature is
+a **full $`k\times k`$ block** $`W^\top\!\operatorname{diag}(s_i e^{\eta_i})W`$. Block elimination
+already factorizes a dense block per node, so this is free; `_MVTreeModel._eliminate` accepts either
+a diagonal $`(N,p)`$ curvature or full $`(N,p,p)`$ blocks. The low-rank latent and its
+$`K=WW^\top`$ / $`K=WW^\top+D`$ estimators are developed in
+[`03_factor_analysis.md`](03_factor_analysis.md) §5–§6; the parameter estimation lives in §8.6 below.
+
 ---
 
 ## 8. Estimating the parameters
@@ -513,7 +532,35 @@ The EM loop alternates an E-step (compute the posterior over the latent $`Z`$ an
 ph.tl.fit_mv_em(tree, obs, model="BM", estep="laplace")   # or "is", "mcmc", or an engine instance
 ```
 
-This is what lets the *same* evolutionary model be fit with different accuracy/cost trade-offs, and what will let future non-log-concave decoders (e.g. a matrix-factorization / scDEF-style decoder) reuse the whole stack by swapping in a sampling engine. The engines, their mathematics, and a head-to-head comparison on the running example are developed in detail in the companion chapter [`docs/inference_engines.md`](inference_engines.md).
+This is what lets the *same* evolutionary model be fit with different accuracy/cost trade-offs, and what will let future non-log-concave decoders (e.g. a matrix-factorization / scDEF-style decoder) reuse the whole stack by swapping in a sampling engine. The engines, their mathematics, and a head-to-head comparison on the running example are developed in detail in the companion chapter [`docs/02_inference_engines.md`](02_inference_engines.md).
+
+### 8.6 Scaling to many genes: factor estimators and a structured `K`
+
+The closed form (§8.1) needs directly observed traits; the direct optimizer (§8.2) and EM (§8.3)
+estimate a **full** $`K`$ at $`O(np^3)`$ — fine for the running example's two genes, infeasible for a
+transcriptome. The low-rank latent of §7.4 gives two scalable maximum-likelihood estimators that
+trade a controlled amount of accuracy for tractability:
+
+- **Poisson factor analysis, $`K=WW^\top`$** (`tools.poisson_factor.fit_poisson_factor_analysis`).
+  The $`k`$-factor latent of §7.4 fit by Laplace-EM: the E-step is the $`k`$-dimensional tree smoother
+  (§8.3); the M-step maximizes the expected Poisson log-likelihood over $`(W,\mu)`$ with a
+  latent-uncertainty correction $`\mathbb E[e^{\eta_{ig}}]=\exp(\mu_g+W_g\hat x_i+\tfrac12 W_g\Sigma_i W_g^\top)`$,
+  which is **concave per gene**. Cost $`O(Nk^3)`$; this is the only feasible estimator at
+  transcriptome scale.
+- **Regularized $`K=WW^\top+\operatorname{diag}(d)`$** (`tools.em.fit_mv_em(..., k_factor=k)`). The
+  same full $`p`$-dim E-step as §8.3, but the M-step **factor-analyzes the expected BM-increment
+  covariance** $`\hat C`$ (the unconstrained MLE of $`K`$) into a low-rank-plus-diagonal matrix by a
+  few Rubin–Thayer iterations (`_factor_analyze_cov`). The diagonal $`d`$ is a *heritable* per-gene
+  term (a private BM on the tree) — the count analogue of factor analysis' idiosyncratic variance,
+  with Poisson sampling already playing the role of measurement noise. This regularizes the
+  gene-gene covariance ($`pk+p`$ parameters instead of $`p^2/2`$) while keeping EM monotone; it is
+  still $`O(np^3)`$ (a $`p`$-dim latent), so it regularizes rather than accelerates.
+
+On simulated ground truth (counts from a known $`K_{\text{true}}`$), the **full** $`K`$ is the most
+accurate gene–gene-correlation estimator wherever $`n\gtrsim p`$ and counts are informative; the
+idiosyncratic term closes most of the rank-$`k`$ model's gap; and the pure factor model's advantage
+is speed and feasibility at large $`p`$ (where full $`K`$ cannot be run). The full comparison,
+including the bias–variance/cost trade-off, is in [`03_factor_analysis.md`](03_factor_analysis.md) §6.
 
 ---
 
@@ -536,7 +583,7 @@ with parameter counts BM $`=2`$ ($`\mu,\sigma^2`$), OU-1 $`=3`$ ($`\alpha,\theta
 
 ---
 
-## 10. Related work: LORACs, TreeVAE, SCOUT, VOUS
+## 10. Related work: PATH, EvoGeneX/CAGEE, LORACs, TreeVAE, SCOUT, VOUS
 
 It is illuminating to place `scPhyTr` next to the closest machine-learning and statistics work, because they share a generative skeleton and differ in instructive ways.
 
@@ -556,6 +603,10 @@ The trade-off is clear: TreeVAE buys a flexible nonlinear decoder at the cost of
 
 **Contemporary parallels.** Two very recent methods pursue essentially the same scientific aim as `scPhyTr` — OU on single-cell lineage trees to separate neutral drift from selection: **SCOUT** (single-cell Ornstein–Uhlenbeck trees, 2025) and **VOUS** (Variational Ornstein–Uhlenbeck Stochastics; Xing, Staklinski & Siepel, 2026). VOUS, like TreeVAE, takes the variational route for sparse counts; `scPhyTr`'s distinctive contributions are the explicitly **multivariate** diffusion $`K`$ (evolutionary correlations between genes) and the linear-time, *exact-marginal* Laplace/pruning/EM stack.
 
+**The statistic camp: PATH.** The most prominent published neighbor in this exact space — heritability versus plasticity of cell phenotypes on single-cell lineage trees — is **PATH** (phylogenetic analysis of trait heritability; Schiffman et al. 2024). PATH adapts **Moran's $`I`$** phylogenetic autocorrelation into a heritability metric (with a cross-correlation between states), and its signature move is to **link that autocorrelation to a two-state Markov transition model**, turning a correlation into an inferred state-*transition* rate; the **PATHpro** extension adds cell-state-specific proliferation via a multitype birth–death process. The contrast with `scPhyTr` is the textbook **moment-statistic versus generative-MLE** split — and PATH explicitly frames itself as the *fast* alternative to maximum-likelihood phylogenetic comparative inference, the camp `scPhyTr` belongs to. Three differences are worth stating precisely. **(i) Target quantity.** Moran's $`I`$ measures *phylogenetic signal* — how strongly shared ancestry $`C`$ structures the trait — whereas `scPhyTr` *deconfounds* $`C`$ (the contrasts of §5.2) to recover the parameters of the generating process, the diffusion $`K`$ and selection $`\alpha`$; in BM/OU terms, high heritability ≈ low plasticity ≈ near-BM/weak pull, high plasticity ≈ strong OU $`\alpha`$ (the lineage forgets its ancestor), and PATH's discrete transition rate is the categorical analogue of that continuous mixing. **(ii) Phenotype and multivariateness.** PATH is built for *categorical* states and their pairwise cross-correlations; `scPhyTr` targets *continuous* expression and estimates the full **multivariate** $`K`$ (gene–gene evolutionary correlations), which PATH does not. **(iii) The tree.** PATH treats branch lengths as a modeling object — it *imputes* them and models proliferation (PATHpro) — while `scPhyTr` conditions on the given tree and leaves proliferation dynamics out of scope. The relationship to our Hotspot critique ([`04_real_data_kptracer.md`](04_real_data_kptracer.md) §4) is clarifying rather than adversarial: Hotspot scores autocorrelation against a cell-exchangeability null the phylogeny *violates* (confounded), PATH scores Moran's $`I`$ against **the tree itself** (a legitimate *summary* of the signal), and `scPhyTr` *models and removes* the tree to estimate the deconfounded rate $`K`$ — three rungs of one ladder: ignore the tree, summarize the tree, model the tree.
+
+**The classical PCM-for-expression camp: EvoGeneX and CAGEE.** Closest of all to `scPhyTr`'s *model* — but furthest in *resolution* — are the phylogenetic comparative methods built for bulk/per-lineage expression. **EvoGeneX** (Pal et al.) fits, gene by gene, the same BM / OU-1 / OU-2 ladder that drives our `detect_adaptive` (§9): neutral drift, a single constrained optimum, or an **adaptive** two-optimum model with a *user-supplied* "chosen"-vs-"background" **regime**, with within-species variation entering as biological **replicates**. **CAGEE** (Mendes et al. 2023) fits a Brownian (optionally bounded) diffusion to estimate a genome-wide expression **rate** on a given tree, and can tie groups of genes to a shared parameter. **Hirsch et al. (2025, *Cell Systems*)** is the clarifying application: they run EvoGeneX on a B2905 melanoma model to flag genes with adaptive expression across **23 clonal sublines**, recovering canonical- vs non-canonical-Wnt programs tied to immunotherapy response. The contrast with `scPhyTr` is *not* the evolutionary model — it is essentially the same OU/BM machinery — but everything around it. **(i) Resolution.** Their tree's leaves are **sublines** (≈23 tips from a consensus mutation phylogeny) and single cells enter only as *replicate measurements within a leaf*; `scPhyTr`'s leaves are **individual cells** of a single-cell lineage-tracing phylogeny (thousands of tips), with a latent at every cell. **(ii) Observation model.** EvoGeneX/CAGEE fit Gaussian-on-log-(TPM/FPKM); `scPhyTr` carries an explicit **Poisson-log-normal count** likelihood marginalized by the latent tree-Laplace (§6), the regime where dense $`O(n^3)`$ phylogenetic likelihoods are infeasible and our linear-time pruning/EM (§5–§8) is required. **(iii) Univariate vs multivariate.** Both EvoGeneX and CAGEE score each gene independently (co-expression is recovered only by post-hoc clustering); `scPhyTr` estimates the full **multivariate** $`K`$, modeling gene co-evolution directly. **(iv) Regimes.** Their adaptive regimes are *supplied* from known phenotype groups; `scPhyTr` supports painted regimes too, but aims at **de novo** clade- and covariate-driven rate variation (§13). In short, `scPhyTr` is best read as lifting the EvoGeneX/CAGEE program from subline-resolution, univariate, Gaussian PCM to **single-cell-resolution, multivariate, count-based** PCM — and Hirsch et al. is the biological evidence that the OU-adaptive paradigm it generalizes is worth scaling. (`scPhyTr` ships a direct comparison: the vendored `EvoGeneX/` and `nongenomic-evolution-of-tumor-subclones/` reproducibility code and `evogenex_comparison.ipynb`.)
+
 ---
 
 ## 11. Software map
@@ -571,7 +622,9 @@ The trade-off is clear: TreeVAE buys a flexible nonlinear decoder at the cost of
 | $`O(np^3)`$ latent Laplace, multivariate (§7) | `inference/tree_laplace_mv.py` | `mv_tree_laplace_marginal`, `_MVTreeModel`, `mv_laplace_estep`, `posterior_covariances` |
 | Model selection (§9) | `tools/model_selection.py` | `fit_bm/ou[/_regimes][_counts]`, `detect_adaptive[_counts]`, `select_model` |
 | Multivariate estimation (§8) | `tools/estimation.py` | `fit_bm_mv`, `fit_ou_mv`, `fit_mv_latent`, `estimate_rate/correlation/optima`, `cov_to_corr` |
-| Laplace-EM, JAX M-step (§8.3) | `tools/em.py` | `fit_mv_em` |
+| Laplace-EM, JAX M-step (§8.3); structured $`WW^\top{+}D`$ (§8.6) | `tools/em.py` | `fit_mv_em` (`k_factor=`), `_factor_analyze_cov` |
+| Poisson factor analysis, $`K=WW^\top`$ (§7.4, §8.6) | `tools/poisson_factor.py` | `fit_poisson_factor_analysis`, `FittedPoissonFactorModel`, `simulate_poisson_pfa` |
+| Phylogenetic factor analysis (Gaussian) | `tools/factor_analysis.py` | `fit_phylo_factor_analysis`, `detect_factor_dynamics` |
 | AnnData entry points | `tools/adaptive.py` | `detect_adaptive_genes`, `detect_adaptive_traits` |
 | Figures / running example | `docs/figures/make_figures.py` | regenerates the two figures and prints the numbers used above |
 
@@ -596,6 +649,7 @@ The guiding principle: an accelerated or approximate method is trusted only afte
 - **EM with a pinned root.** The smoother (8.3) currently assumes a free root; generalize the edge statistics to the fixed-root case so EM matches the marginal/direct fitter there too.
 - **Multivariate OU regimes for counts.** `fit_mv_em` supports regimes structurally; validate multi-optimum recovery from counts and expose it through the estimator API.
 - **Richer observation models.** Negative binomial (overdispersion), zero-inflation, and Gaussian-with-known-variance all plug in by implementing `loglik/grad/neg_hess_diag`; only the E-step changes. This would narrow the modeling gap to TreeVAE/VOUS while keeping the exact-marginal machinery wherever the link is log-concave.
+- **A fast `$`O(Nk^3)`$` path for `$`K=WW^\top{+}D`$`.** The regularized estimator of §8.6 currently runs in the $`p`$-dim latent. A joint $`(k+p)`$-dim latent — $`k`$ shared factors plus a per-gene private BM — has a diagonal $`p\times p`$ curvature block that Schur-complements onto the factors cheaply, delivering the idiosyncratic-heritable estimator at factor-model speed (see `03_factor_analysis.md` §6). This is the most promising route to scalable, *accurate* transcriptome-wide $`K`$.
 - **Heterogeneous rates.** Per-clade scaling of $`K`$ for rate variation across the tree; covariate-driven rates (e.g. spatial niche).
 - **Uncertainty.** The Laplace posterior already yields parameter curvature; add profile/Hessian confidence intervals and a parametric bootstrap.
 - **Faster M-step.** Use the closed forms for $`K`$ and $`\theta`$ given $`\alpha`$, with an exact line search on the single nonlinear coordinate $`\alpha`$.
@@ -627,3 +681,9 @@ The guiding principle: an accelerated or approximate method is trusted only afte
 - Lopez, R. et al. (2021). *Reconstructing unobserved cellular states from paired single-cell lineage tracing and transcriptomics data (TreeVAE).* ICML Workshop on Computational Biology.
 - SCOUT (2025). *Ornstein–Uhlenbeck modelling of gene expression evolution on single-cell lineage trees.* bioRxiv 2025.11.12.688020.
 - Xing, J., Staklinski, S. & Siepel, A. (2026). *VOUS: Variational Ornstein–Uhlenbeck Stochastics linking single-cell lineage tracing with dynamic gene expression.* MLGenX.
+- Schiffman, J. S., D'Avino, A. R., Prieto, T. et al. (2024). *Defining heritability, plasticity, and transition dynamics of cellular phenotypes in somatic evolution (PATH).* Nature Genetics 56:2174–2184. (Moran's-$`I`$ phylogenetic autocorrelation as a heritability/plasticity metric; transition and proliferation inference.)
+
+**Phylogenetic comparative methods for gene expression.**
+- Pal, S. et al. *EvoGeneX.* (BM/OU-1/OU-2 adaptive-expression detection with within-species replicates; the model family of §9.)
+- Mendes, F. K. et al. (2023). *CAGEE: computational analysis of gene expression evolution.* Molecular Biology and Evolution 40:msad106. (Brownian / bounded-Brownian expression-rate estimation on a phylogeny.)
+- Hirsch, M. G., Pal, S., Rashidi Mehrabadi, F. et al. (2025). *Stochastic modeling of single-cell gene expression adaptation reveals non-genomic contribution to evolution of tumor subclones.* Cell Systems 16:101156. (EvoGeneX applied to 23 B2905 melanoma sublines; adaptive Wnt programs and immunotherapy response.)

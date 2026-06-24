@@ -2,7 +2,7 @@
 
 *A textbook-style chapter on approximating the latent posterior of a Gaussian tree model observed through a non-conjugate decoder.*
 
-> **Prerequisites.** This chapter assumes the model, notation, and the Laplace-EM of the main methods write-up ([`docs/methods.md`](methods.md), especially sections 6-8). We reuse its running example throughout: a balanced tree, two genes evolving by a correlated latent Brownian motion, observed as Poisson counts. Here the tree has $`n=32`$ leaves; we hold the evolutionary parameters $`\eta=(\alpha,\theta,K)`$ fixed at their true values and study only the inner inference problem.
+> **Prerequisites.** This chapter assumes the model, notation, and the Laplace-EM of the main methods write-up ([`docs/01_methods.md`](01_methods.md), especially sections 6-8). We reuse its running example throughout: a balanced tree, two genes evolving by a correlated latent Brownian motion, observed as Poisson counts. Here the tree has $`n=32`$ leaves; we hold the evolutionary parameters $`\eta=(\alpha,\theta,K)`$ fixed at their true values and study only the inner inference problem.
 
 ---
 
@@ -16,8 +16,9 @@
 6. [Engine III: Hamiltonian Monte Carlo (NUTS)](#6-engine-iii-hamiltonian-monte-carlo-nuts)
 7. [Head-to-head on the running example](#7-head-to-head-on-the-running-example)
 8. [How an engine plugs into EM](#8-how-an-engine-plugs-into-em)
-9. [What variational inference would add (deferred)](#9-what-variational-inference-would-add-deferred)
-10. [References](#10-references)
+9. [Beyond diagonal curvature: low-rank factor decoders](#9-beyond-diagonal-curvature-low-rank-factor-decoders)
+10. [What variational inference would add (deferred)](#10-what-variational-inference-would-add-deferred)
+11. [References](#11-references)
 
 ---
 
@@ -281,7 +282,46 @@ so `fit_mv_em(tree, obs, ..., estep="laplace" | "is" | "mcmc")` selects the engi
 
 ---
 
-## 9. What variational inference would add (deferred)
+## 9. Beyond diagonal curvature: low-rank factor decoders
+
+Everything above assumed the leaf curvature $`W=-\nabla^2\ell`$ is **diagonal** — the observations are
+conditionally independent across the latent coordinates given the latent (methods §3.1). That holds
+when each latent coordinate is one gene's log-rate. It **fails**, in an instructive and benign way,
+for the low-rank **factor decoder** of [`03_factor_analysis.md`](03_factor_analysis.md) §5, where each node
+carries $`k`$ latent factors $`x_i\in\mathbb R^k`$ and the $`p`$ genes are a linear readout
+$`\eta_i=\mu+Wx_i`$ observed as Poisson counts. There a single factor influences *every* gene, so the
+factors are coupled in the likelihood and the per-leaf curvature is a **full $`k\times k`$ block**
+
+```math
+W_i \;=\; -\nabla^2_{x_i}\ell_i \;=\; W^\top \operatorname{diag}\!\big(s_i e^{\eta_i}\big)\,W \ \succeq 0, \quad (9.1)
+```
+
+rather than a diagonal. This is the *only* change the engines need, and it leaves all three intact:
+
+- **Log-concavity is preserved.** (9.1) is PSD for any loading $`W`$ (it is a Gram matrix), so the
+  log-posterior (2.1) stays concave and the Laplace mode is still unique.
+- **Sparsity is preserved.** The posterior precision is still $`Q+W`$ with $`W`$ **block-diagonal over
+  leaves** — now genuinely dense within each $`k\times k`$ leaf block instead of diagonal. The tree
+  sparsity (one block per node, coupled only parent–child) is untouched, so the $`O(Nk^3)`$ block
+  elimination, the RTS smoother (3.2), and the FFBS sampler (4.1) all run unchanged. In code the
+  single generalization is that `_MVTreeModel` accepts a full $`(N,k,k)`$ curvature (`_obs_block`)
+  wherever it previously took a diagonal $`(N,k)`$ one; the elimination already factorizes a dense
+  block per node, so the asymptotic cost is identical.
+- **The sampling engines need nothing new.** Importance sampling reweights the *same* Laplace
+  proposal — only the log-likelihood term $`\ell(F_s)`$ in the weight (5.1) changes to the factor
+  decoder's. NUTS differentiates the *same* JAX log-density (6.1), now with $`\ell=\sum_{ig}\log\mathrm{Poisson}(y_{ig};s_i e^{(\mu+Wx_i)_g})`$.
+
+So the **contract (1.3) and the engine abstraction are dimension- and curvature-agnostic**: a decoder
+is fully specified by `loglik / grad / neg_hess_block` (a per-leaf $`k\times k`$ block) and
+`loglik_jax`, and the factor model of `03_factor_analysis.md` §5 is exactly such a decoder
+(`_PoissonFactorLeafObs`). The one caveat is statistical, not computational: factor decoders are
+identifiable only up to a rotation of the factors (`03_factor_analysis.md` §3.3), so the engines
+summarize the posterior over the *subspace* faithfully, but individual factor coordinates are
+meaningful only after the dynamics-based disambiguation of `03_factor_analysis.md` §4.
+
+---
+
+## 10. What variational inference would add (deferred)
 
 A fourth engine, variational inference (VI), is a natural addition and is currently deferred. Where Laplace fixes the approximating Gaussian's covariance to the *curvature at the mode* $`H^{-1}`$, VI would **optimize** an approximating family $`q_\xi`$ to minimize $`\mathrm{KL}(q_\xi\,\|\,p(\cdot\mid Y))`$, equivalently maximizing the evidence lower bound
 
@@ -293,7 +333,7 @@ The principled choice here is a **structured Gaussian** $`q_\xi = \mathcal N(\mu
 
 ---
 
-## 10. References
+## 11. References
 
 **Expectation-Maximization and Monte Carlo EM.**
 - Dempster, A. P., Laird, N. M. & Rubin, D. B. (1977). *Maximum likelihood from incomplete data via the EM algorithm.* JRSS-B 39:1-38.
