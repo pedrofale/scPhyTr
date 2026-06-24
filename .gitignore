@@ -1,7 +1,10 @@
 __pycache__/
 
-# matplotlib cache used by docs/figures/make_figures.py
-docs/figures/.mplcache/
+# matplotlib cache
+**/.mplcache/
+
+# numba cache (Hotspot/numba JIT)
+**/.numba_cache/
 
 EvoGeneX/
 
@@ -10,3 +13,6 @@ nongenomic-evolution-of-tumor-subclones/
 scphytr.egg-info/
 
 .DS_Store
+
+# Large external datasets (KP-Tracer etc.)
+data/external/
