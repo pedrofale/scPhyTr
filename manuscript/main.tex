@@ -1,0 +1,638 @@
+\documentclass{article}
+
+\usepackage{arxiv} % same template as the iscc paper; provide arxiv.sty when compiling
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{xurl}           % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{titling}
+\usepackage{cleveref}
+
+\graphicspath{{figures/}}
+
+% Fallback affiliations environment (nature-style), as in the iscc paper.
+\newenvironment{affiliations}{\begin{flushleft}\small}{\end{flushleft}}
+
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\newcommand{\RR}{\mathbb{R}}
+\newcommand{\scphytr}{\texttt{scPhyTr}}
+
+\title{\scphytr{}: a unified phylogenetic comparative model for the evolution of
+single-cell gene expression}
+
+\author{
+  Pedro F.~Ferreira$^{1,2,*}$ % TODO: add co-authors / PI before submission
+}
+\date{}
+\date{\vspace{-5ex}}
+
+\begin{document}
+\maketitle
+
+\begin{affiliations}
+ \item $^1$Department of Biosystems Science and Engineering, ETH Zurich, Basel, Switzerland
+ \item $^2$SIB Swiss Institute of Bioinformatics, Basel, Switzerland
+ \item $^*$Corresponding author
+\end{affiliations}
+
+\vspace{.5cm}
+
+\begin{abstract}
+Single-cell lineage tracing now resolves the phylogeny and the transcriptome of the
+same cells, raising three intertwined questions about how gene expression evolves
+along a cellular genealogy: how \emph{heritable} (versus plastic) each program is,
+whether it is under \emph{selection}, and which genes \emph{co-evolve}. These
+questions are currently answered by separate, non-interoperable tools---phylogenetic
+autocorrelation for heritability, Ornstein--Uhlenbeck model fitting for adaptation,
+and local autocorrelation for gene modules---each of which treats normalized
+expression as a Gaussian trait and discards the count nature of single-cell data. We
+introduce \scphytr{}, a single generative model that places a latent Brownian-motion
+or Ornstein--Uhlenbeck process on the lineage tree and reads it out through an
+explicit count (Poisson or negative-binomial) observation model. From one fit
+\scphytr{} estimates the heritability of a trait (Pagel's $\lambda$), distinguishes
+neutral drift from stabilizing or adaptive selection, quantifies evolutionary rates
+and the full matrix of gene--gene evolutionary correlations, and separates heritable
+from within-clone plastic variation. Inference is linear time in the number of cells
+and exact up to a sparsity-preserving Laplace approximation, and scales to
+transcriptomes through a batched per-gene engine and phylogenetic factor analysis. On
+ground-truth simulations the count model retains power to detect heritable expression
+at the low sequencing depths where Gaussian-on-log methods fail; on the lineage-tracing
+data from the PATH study, and transcriptome-wide on the KP-Tracer tumor atlas, \scphytr{}'s
+$\lambda$ reproduces PATH's heritability ranking; and on a melanoma subline dataset it recovers adaptive expression and a heritable-versus-plastic
+decomposition that flags invasion-associated genes as the most plastic. \scphytr{} is
+available as an open-source Python package.
+\end{abstract}
+
+\section*{Introduction}
+\label{sec:introduction}
+
+Single-cell lineage-tracing technologies reconstruct, for thousands of cells assayed in
+a single experiment, both a rooted phylogeny---from evolving CRISPR/Cas9
+recorders~\cite{mckenna_gestalt_2016, raj_scgestalt_2018}, native somatic variants, or
+copy-number profiles---and a paired single-cell transcriptome~\cite{wagner_lineage_2020}.
+The phylogeny records how cells are related; the transcriptome records what each cell is
+doing. Together they make it possible, for the first time at scale, to ask how a cell's
+\emph{phenotype} evolves along its genealogy.
+
+Three questions recur. The first is \emph{heritability versus plasticity}: does a cell
+state propagate to a cell's descendants, or does it switch on timescales shorter than
+cell division~\cite{schiffman_path_2024}? The second is \emph{selection}: is a gene's
+expression drifting neutrally, held near an optimum by stabilizing selection, or shifted
+in a particular lineage by adaptation~\cite{hirsch_emt_2025}? The third is
+\emph{co-evolution}: which genes or programs change together along the tree, defining
+coordinated modules of expression evolution?
+
+Each question is, at present, addressed by a dedicated method built on a different
+statistical footing. PATH quantifies heritability as the phylogenetic autocorrelation
+(Moran's $I$) of a cell state and links it to a state-transition
+rate~\cite{schiffman_path_2024, moran_autocorrelation_1950}. EvoGeneX and CAGEE fit
+Brownian-motion and Ornstein--Uhlenbeck (OU) models---the phylogenetic comparative
+methods of evolutionary biology~\cite{felsenstein_contrasts_1985, hansen_ou_1997,
+butler_king_2004}---to log-transformed bulk or pseudobulk expression to call genes whose
+expression has adaptively shifted between groups of
+species~\cite{mendes_cagee_2023, rohlfs_eve_2015}. Hotspot scores the local phylogenetic
+or spatial autocorrelation of each gene to assemble co-autocorrelated
+modules~\cite{detomaso_hotspot_2021}. These tools are not interoperable: they target
+different quantities, return outputs in different formats, and---critically---each
+operates on a normalized, log-transformed expression value treated as a Gaussian trait,
+discarding the fact that single-cell expression is observed as sparse counts whose noise
+is mean-dependent. They are also predominantly univariate, so coordinated evolution is
+recovered only by clustering single-gene results \emph{post hoc}, an operation that is
+itself confounded by shared ancestry~\cite{felsenstein_contrasts_1985}.
+
+The classical phylogenetic comparative framework already provides a unifying language for
+all three questions: a continuous character evolving by BM or OU on a tree has a
+heritability (its phylogenetic signal), a selection regime (drift versus an optimum), an
+evolutionary rate, and, in the multivariate case, an evolutionary covariance between
+characters. What has prevented this framework from being applied directly to single-cell
+expression is threefold: the need to model sparse counts rather than a Gaussian
+log-expression; the need to scale to transcriptome-wide panels of genes and to trees with
+thousands of cells; and the need to estimate the multivariate structure that captures
+co-evolution.
+
+Here we introduce \scphytr{}, a phylogenetic comparative model for single-cell gene
+expression that addresses these three obstacles in one coherent generative framework. A
+latent BM or OU process evolves a real-valued expression state at every node of the
+lineage tree, and an explicit observation model---Poisson or negative-binomial for counts,
+Gaussian for directly measured traits---connects the latent state to the data at the
+leaves. Because the evolutionary model and the observation model are separated, the same
+inference machinery estimates, from a single fit, the heritability of a trait, its
+drift-versus-selection regime, its evolutionary rate, the matrix of gene--gene
+evolutionary correlations, and its within-clone plasticity---recovering, as special cases,
+the quantities that PATH, EvoGeneX and Hotspot each compute separately. Inference exploits
+the Markov structure of evolution on a tree to remain linear time in the number of cells,
+and a batched engine and phylogenetic factor analysis extend it to transcriptome scale.
+
+\section*{Results}
+\label{sec:results}
+
+\subsection*{One generative model for heritability, selection and co-evolution}
+
+\scphytr{} models the log-expression of a panel of genes as a latent stochastic process
+on the lineage tree, observed through a count likelihood at the leaves
+(\Cref{fig:overview}). Along each branch, the latent state evolves by multivariate
+Brownian motion---the null model of neutral drift, parameterized by a $p\times p$
+diffusion (rate) matrix $K$---or by an Ornstein--Uhlenbeck process, which adds a pull of
+strength $\alpha$ toward an optimum $\theta$ that models stabilizing selection and, with
+clade-specific optima, adaptive shifts. The observed counts at each cell are a noisy
+read-out of the latent state of that cell, with a per-cell size factor; cells belonging to
+the same clone or subclone share that clone's latent state, so within-clone spread beyond
+sampling noise is modeled as plasticity.
+
+This single model yields, from one fit, the quantities that specialized tools compute
+separately. Its diagonal $K$ entries are per-gene evolutionary rates, as in CAGEE; its
+off-diagonal entries are gene--gene evolutionary correlations, the multivariate structure
+that defines co-evolving programs and that univariate tools cannot access. Comparing BM,
+single-optimum OU and multi-regime OU by information criteria distinguishes neutral drift
+from stabilizing selection and from an adaptive shift between groups of cells, the test
+that EvoGeneX performs. Fitting Pagel's $\lambda$---the proportion of trait covariance
+that follows the tree---gives a heritability statistic directly analogous to PATH's
+phylogenetic autocorrelation, while the OU mixing rate $\alpha$ gives the complementary
+transition rate. The within-clone overdispersion gives a count-level plasticity term,
+and the block structure of $K$ defines expression modules without the cell-exchangeability
+null that confounds Hotspot. \scphytr{} is, in this sense, a single interpretable model
+whose parameters span the union of questions addressed by the existing tools.
+
+\subsection*{Linear-time, exact-marginal inference scales to transcriptomes}
+
+Evolution on a tree is a Gaussian Markov random field: although the covariance between
+tips is dense, the precision of the joint latent state is as sparse as the
+tree~\cite{rue_held_2005}. \scphytr{} exploits this to keep all computations linear in the
+number of cells. For Gaussian observations the marginal likelihood is computed exactly by
+Felsenstein's pruning algorithm~\cite{felsenstein_pruning_1973}; for non-conjugate count
+observations it is computed by a sparsity-preserving Laplace approximation that places a
+latent at every node and never forms a dense covariance, so the cost remains $O(n)$ in the
+number of cells and $O(p^3)$ in the number of genes (\Cref{sec:methods}). Parameters are
+estimated by maximum marginal likelihood, either directly or by an
+Expectation--Maximization algorithm whose E-step is a tree smoother and whose M-step uses
+automatic differentiation; the E-step is pluggable, so the same evolutionary model can be
+fit with a deterministic Laplace approximation or with asymptotically exact Markov chain
+Monte Carlo. Against dense oracles, the linear-time marginal and the multivariate block
+recursion agree to machine precision (to $10^{-13}$ for Gaussian observations and
+$10^{-7}$ for Poisson on validation trees).
+
+Two further components extend the framework to transcriptome scale. A batched engine
+evaluates the per-gene marginal for all genes simultaneously by vectorizing the tree
+recursion over the gene axis, so that the per-node computation is amortized across the
+panel; in practice it fits BM, single-optimum OU and multi-regime OU and selects among
+them at a few milliseconds per gene, bringing a transcriptome-wide scan from hours to
+minutes. For a full $p\times p$ diffusion matrix, which has $O(p^2)$ parameters,
+\scphytr{} instead fits a low-rank-plus-diagonal phylogenetic factor model
+$K = WW^\top + D$ in $O(nk^3)$ time, where $k\ll p$ is the number of latent expression
+programs and $D$ is a per-gene heritable idiosyncratic term.
+
+\subsection*{Modeling counts improves heritability detection at low sequencing depth}
+
+The distinctive methodological choice in \scphytr{}---an explicit count observation model
+rather than a Gaussian model of log-normalized expression---matters most where data are
+sparse. We constructed a ground-truth benchmark in which a continuous expression trait is
+either heritable (Brownian on the tree) or plastic (independent across cells), generated
+Poisson counts at a controlled sequencing depth, and measured each method's ability to
+separate the two by the area under the receiver operating characteristic curve (AUROC),
+sweeping depth from one to sixty-four mean counts per cell (\Cref{fig:depth};
+\Cref{sec:methods}). All methods used the same tree and the same task; only the
+observation model differed, with \scphytr{} consuming counts and the Gaussian-on-log
+competitors (an EvoGeneX-style Brownian fit and PATH's Moran's $I$) consuming the
+normalized trait.
+
+At deep coverage all three methods detect heritability well (AUROC $0.93$--$0.99$ at
+sixty-four counts per cell). As depth drops, the Gaussian-on-log methods degrade sharply,
+falling to near-chance discrimination at one count per cell (AUROC $0.66$ for the
+EvoGeneX-style fit and $0.65$ for Moran's $I$), whereas \scphytr{} retains substantial
+power (AUROC $0.82$)---a gap of roughly $0.17$ AUROC attributable solely to modeling the
+counts. In a complementary experiment in which we simulated a true adaptive shift in a
+silenced clade and counted false-positive adaptive calls under the null, the
+Gaussian-on-log test's false-positive rate inflated toward one as depth fell, while the
+count model's remained stable. These results quantify, on data with known truth, the cost
+of the Gaussian-on-log approximation for sparse single-cell data and the corresponding
+advantage of an explicit count model.
+
+\subsection*{\scphytr{} recovers phylogenetic heritability on lineage-tracing data}
+
+To test whether \scphytr{} reproduces a specialized tool's read-out on that tool's own
+data, we applied it to the pancreatic-cancer lineage-tracing dataset analyzed by
+PATH~\cite{schiffman_path_2024, simeonov_emt_2021}, in which an epithelial-to-mesenchymal
+transition (EMT) pseudotime is measured for each cell on reconstructed single-cell trees.
+We fit \scphytr{}'s Pagel's $\lambda$ heritability statistic to the EMT pseudotime and
+compared it, clone by clone, to PATH's Moran's $I$ (\Cref{fig:emt}).
+
+The two statistics agree. On the clone with the most cells, \scphytr{} and PATH both call
+the EMT pseudotime significantly heritable ($\lambda = 0.68$, likelihood-ratio
+$p < 10^{-60}$; Moran's $I = 0.05$, permutation $p = 0.002$), and the OU mixing rate from
+the same fit provides PATH's complementary transition read-out. Across clones, \scphytr{}
+and PATH agree on the binary heritability call in $90\%$ of cases, and among the clones
+where both statistics are statistically reliable---those with at least one hundred
+cells---\scphytr{}'s $\lambda$ reproduces PATH's heritability ranking exactly (Spearman
+$\rho = 1.0$). The discordances are confined to clones with fewer than fifty cells, where
+the maximum-likelihood $\lambda$ overfits; this is a small-sample limitation that PATH
+mitigates by bootstrapping and that \scphytr{} will adopt. \scphytr{} thus recovers PATH's
+heritability measure on PATH's own data while delivering, from the same model, the
+selection and rate read-outs that PATH does not provide.
+
+To test the agreement transcriptome-wide in the sparse, in-vivo single-cell regime that
+favours autocorrelation methods, we turned to the KP-Tracer mouse lung-adenocarcinoma
+lineage-tracing atlas~\cite{yang_kptracer_2022}, whose reconstructed tumor trees carry
+hundreds to thousands of profiled cells. On the four high-fitness tumors and the most
+variable genes of each, we compared \scphytr{}'s $\lambda$ to PATH's Moran's $I$ on the
+identical cell-level tree. The two agree on the binary heritability call for $87\%$ of
+genes, and within each tumor $\lambda$ reproduces PATH's gene ranking (median Spearman
+$\rho = 0.58$; $\rho = 0.44$--$0.77$ in three of the four tumors). In the fourth and
+deepest tree both statistics still call essentially all genes heritable but their
+magnitudes compress into narrow bands, so the rank correlation---though not the
+calls---degrades; this exposes a property that motivates the model-based statistic, namely
+that Moran's $I$ is not comparable across trees of different depth whereas $\lambda$, a
+bounded proportion of variance, is. As expected for these fate-converged high-fitness
+tumors, one-hot cell-state traits are dominated by a single fate and are uninformative,
+and the maximum-likelihood $\lambda$ again overfits the rarest states---the same
+small-sample behaviour seen on the smallest EMT clones. Because the integrated KP-Tracer
+expression is distributed only in normalized form, this comparison uses \scphytr{}'s
+Gaussian-trait path; the count-model advantage is the one established in simulation and on
+the deeply sequenced sublines.
+
+\subsection*{\scphytr{} detects adaptive and plastic expression in tumor subclones}
+
+We next applied \scphytr{} to the melanoma subline dataset for which EvoGeneX was
+developed~\cite{hirsch_emt_2025}, comprising single cells from clonal sublines of a mouse
+melanoma model with a reconstructed subline phylogeny. Because these full-length
+Smart-seq2 cells are deeply sequenced, we used the per-cell count model with the cells of
+each subline treated as repeated observations of that subline's latent state, fitting BM,
+single-optimum OU and adaptive two-regime OU per gene and selecting among them.
+
+\scphytr{} jointly estimates, for every gene, an evolutionary rate, an adaptive call, and a
+within-subline plasticity term. The resulting heritable-versus-plastic decomposition is
+biologically coherent: the most plastic genes---those whose variation is largest within
+sublines relative to the heritable component between them---are matrix and
+invasion-associated genes including \emph{Thbs1}, \emph{Adamts1} and \emph{Fn1}, whereas
+the most heritable genes are housekeeping genes such as \emph{Gapdh}. This recovers, within
+a single count-based model, the kind of plasticity structure that motivated the original
+study. We confirmed that the inferred rates are invariant to the gene-length normalization
+appropriate to full-length protocols, as expected because a per-gene length factor is
+absorbed by the per-gene baseline. We note one negative result that bears on
+interpretation: scanning all genes detected in every subline, the genes \scphytr{} calls
+adaptive are not enriched for canonical Wnt-signaling membership, the pathway highlighted
+by the original analysis; the adaptive signal instead tracks expression variability. We
+return to this in the Discussion.
+
+\subsection*{\scphytr{}'s evolutionary correlation matrix defines co-evolving modules without tree confounding}
+
+The off-diagonal of \scphytr{}'s rate matrix $K$ is a deconfounded measure of which genes
+co-evolve. To benchmark it against the autocorrelation- and graph-based alternatives with a
+known answer, we kept a real KP-Tracer tumor's tree and branch lengths but simulated genes
+as multivariate Brownian motion with a prescribed $K$: a block of co-evolving genes plus a
+majority of evolutionarily independent genes ($K$ diagonal). We then asked three methods,
+at a common false-discovery threshold, to recover the gene--gene associations: \scphytr{}'s
+deconfounded correlation (Felsenstein contrasts), PATH's phylogenetic cross-correlation, and
+Hotspot's tree-mode local correlation.
+
+The methods diverge sharply on the independent genes (\Cref{fig:coevo}). Shared ancestry
+makes two evolutionarily independent genes co-vary at the tips, and the two methods that do
+not partial it out manufacture co-evolution from it: averaged over replicates and two tumor
+trees, PATH's cross-correlation falsely calls $96\%$ of independent gene pairs co-evolving
+and Hotspot $73\%$, against a nominal $5\%$. \scphytr{}'s deconfounded $K$ holds the false
+rate at $0.4\%$ while recovering the entire planted module (power $1.0$), separating true
+from spurious co-evolution essentially perfectly (AUROC $1.0$ versus $0.74$ for PATH and
+$0.5$---chance---for Hotspot). Because this comparison isolates the confounding axis, it uses
+noise-free Gaussian traits, the regime most favourable to the competitors; the gap is a
+property of the estimand, not of sequencing depth. The block structure of $K$ thus provides
+the module definition Hotspot targets, but with the cell-exchangeability null replaced by the
+phylogeny it omits.
+
+The full $p \times p$ matrix $K$ does not scale to transcriptome-wide analysis, and a dense
+estimate is in any case ill-posed: with $n$ cells the deconfounded correlation has only
+$n-1$ effective degrees of freedom, so for $p > n$ it is rank-deficient and not a valid
+(positive-definite) covariance. \scphytr{} therefore parameterizes $K$ in low rank through
+Poisson phylogenetic factor analysis: $k$ latent factors evolve as Brownian motions on the
+tree and load onto genes through a $p \times k$ matrix $W$, giving $K = W W^{\mathsf{T}}$ in
+$O(N k^3)$ time and $O(p k)$ storage---the factor map, not the $p \times p$ matrix, is ever
+formed. On the same real KP-Tracer trees, simulating counts from a known rank-$k$ program and
+fitting the factor model recovers the planted module perfectly up to $p = 8000$ genes (block
+AUROC $1.0$) in seconds, where the dense $K$ would require two orders of magnitude more
+storage and is not positive-definite (\Cref{fig:pfa}). The number of factors can itself be
+chosen \emph{de novo} by parallel analysis on the contrasts, which returns zero factors on
+evolutionarily independent genes---where the same test on the raw leaves invents spurious
+programs from shared ancestry---and recovers the true rank when a program is present.
+
+\subsection*{\scphytr{} detects clade-specific rate shifts as fast as it estimates them, against RevBayes}
+
+A distinct question is rate \emph{heterogeneity}: does the tempo of expression evolution
+accelerate in a particular clade? The Bayesian reference for this problem is RevBayes, which
+places rate shifts on the tree by reversible-jump MCMC~\cite{hohna_revbayes_2016}. \scphytr{}
+fits the same multi-rate Brownian motion but localizes the shift by penalized-likelihood
+forward selection, trading a posterior for speed. We compared the two on $50$-tip trees with
+a single planted rate shift of varying magnitude, handing both tools the identical tree and
+trait (\Cref{fig:rateshift}). At a fourfold shift both methods sat near the detection floor
+(each localizing the shift to the correct clade in about a quarter of replicates), reflecting
+how little a single Brownian realization on fifty tips constrains a modest rate change. At a
+sixteenfold shift \scphytr{} localized the shift in every replicate against $75\%$ for
+RevBayes' highest-posterior branch, and across magnitudes \scphytr{} recovered the size of
+the rate change nearly without bias ($4.4\times$ and $17\times$ estimated for true $4\times$
+and $16\times$), whereas RevBayes' reversible-jump posterior shrank it heavily toward the
+null ($1.4\times$ and $3.6\times$). \scphytr{} did so roughly a hundred times faster (about
+one second versus ninety seconds of MCMC per dataset). Its de-novo search is calibrated: with
+a location penalty correcting for the choice among candidate branches, it raised no false
+shift on homogeneous-rate null trees. The comparison is not all in \scphytr{}'s favour:
+RevBayes solves the harder, more general problem of a full posterior over every branch's
+rate and shift probability, and its shrinkage is the expected, calibrated behaviour of a
+parsimonious prior, whereas \scphytr{} returns a single configuration. The point is that
+\scphytr{}'s linear-time marginal makes a maximum-penalized-likelihood shift search so cheap
+that it recovers the same rate-shift structure RevBayes targets, at interactive speed and
+with a tighter, model-matched estimate of the rate change. On a real KP-Tracer tumor the same
+trade-off recurs: for the most variable gene, \scphytr{} selects a roughly threefold rate
+increase in a large subclade, whereas RevBayes' posterior places no branch above a $0.10$
+shift probability---the moderate-effect regime in which, by the simulations above,
+\scphytr{} is the more sensitive and RevBayes the more conservative. Without ground truth on
+real data the disagreement cannot be adjudicated, but it concretely illustrates that the two
+inferential philosophies can reach different calls on the same data.
+
+\section*{Discussion}
+\label{sec:discussion}
+
+\scphytr{} brings the phylogenetic comparative methods of evolutionary biology to
+single-cell gene expression in a form that is, in three respects, more general than the
+specialized tools that currently partition this problem. It models the data as counts
+rather than as a Gaussian function of normalized expression, which we show is the
+decisive advantage at the sparse depths typical of single-cell data; it is multivariate,
+estimating the gene--gene evolutionary correlations that define co-evolving programs and
+that univariate tools recover only through confounded \emph{post hoc} clustering; and it
+operates natively at single-cell resolution, placing a latent state at every cell of the
+lineage tree. Because it is a single generative model, the heritability, selection, rate,
+co-evolution and plasticity read-outs are mutually consistent and are produced by one fit,
+rather than by stitching together tools with incompatible assumptions.
+
+\scphytr{} relates to existing methods along a spectrum. PATH~\cite{schiffman_path_2024}
+is a fast moment statistic---a phylogenetic autocorrelation---that measures how strongly
+shared ancestry structures a trait; \scphytr{} estimates the parameters of the generating
+process behind that signal, recovering PATH's heritability while adding selection, rate and
+co-evolution. EvoGeneX and CAGEE~\cite{hirsch_emt_2025, mendes_cagee_2023} fit the same BM
+and OU models, but to log-normalized bulk or pseudobulk expression and one gene at a time;
+\scphytr{} lifts that program to single-cell-resolution, count-based and multivariate
+inference. RevBayes~\cite{hohna_revbayes_2016} is the Bayesian end of this axis, fitting
+rate-shift and relaxed-clock models by reversible-jump MCMC and returning full posteriors;
+\scphytr{} trades that posterior for a linear-time penalized-likelihood estimate that
+localizes the same shifts about seventy times faster, a difference that compounds at
+single-cell tree sizes. TreeVAE and related variational approaches~\cite{lopez_treevae_2021} buy a
+flexible neural decoder at the cost of an approximate variational objective and latent
+variables that are not individually interpretable, whereas \scphytr{} keeps a log-linear
+observation model in exchange for a near-exact marginal likelihood and identifiable
+evolutionary parameters. Hotspot~\cite{detomaso_hotspot_2021} scores autocorrelation
+against a cell-exchangeability null that the phylogeny violates; \scphytr{} models and
+removes the tree, so its modules are defined by the evolutionary covariance rather than by
+smoothed shared ancestry.
+
+Several limitations qualify these results and define the work ahead. The count marginal is
+computed by a Laplace approximation, which is exact for Gaussian observations and tight for
+the log-concave Poisson likelihood but inexact in general; importance-sampling and Markov
+chain Monte Carlo engines are available where higher fidelity is required. Model selection
+by information criteria on approximate marginals can be liberal, and we observed that the
+fraction of genes called adaptive is sensitive to the treatment of within-clone
+overdispersion. The maximum-likelihood heritability statistic overfits on trees with few
+tips and should be regularized by a bootstrap, as PATH does. Like the methods it
+generalizes, \scphytr{} conditions on a fixed tree and, for the adaptive test, on a
+supplied regime partition; propagating tree uncertainty and inferring regimes \emph{de
+novo}---for example from spatial niches---are natural extensions. Finally, the negative
+result on the melanoma data, in which adaptive genes were not enriched for Wnt signaling,
+is a cautionary finding rather than a contradiction: \scphytr{}'s adaptive signal tracks
+how variable a gene's expression is across the genealogy, which need not coincide with
+membership of a curated pathway, and a faithful comparison to the original analysis will
+require matching its full transcriptome-wide statistics and gene-set machinery.
+
+The framework opens several directions. The negative-binomial batched engine will make
+calibrated adaptive scans feasible transcriptome-wide; applying \scphytr{} to large,
+sparse droplet-based lineage-tracing atlases is the regime where its count and single-cell
+advantages should be largest, and where the comparison to PATH and Hotspot will be most
+informative; and the multivariate diffusion matrix provides a principled, deconfounded
+definition of expression modules that we will benchmark directly against autocorrelation-based
+module detection. By expressing heritability, selection and co-evolution as parameters of a
+single evolutionary model, \scphytr{} aims to make the study of how gene expression evolves
+along a cellular genealogy quantitative and unified.
+
+\section*{Methods}
+\label{sec:methods}
+
+\subsection*{The latent evolutionary model}
+For a panel of $p$ genes, \scphytr{} posits a latent real-valued state $z_u\in\RR^p$ at
+every node $u$ of the rooted tree $T$, interpreted as log-expression. Under Brownian
+motion, the state along a branch of length $t$ takes an independent Gaussian step
+$z_{\text{child}}\mid z_{\text{parent}}\sim\mathcal N(z_{\text{parent}}, t\,K)$, where the
+$p\times p$ positive-definite diffusion matrix $K$ has per-gene rates on its diagonal and
+evolutionary covariances off-diagonal. The Ornstein--Uhlenbeck process adds a pull toward
+an optimum, $\mathrm dz = -\alpha(z-\theta)\,\mathrm ds + K^{1/2}\,\mathrm dW$, integrated
+over a branch to a linear-Gaussian transition with contraction $\phi=e^{-\alpha t}$ and
+variance factor $v(t)=(1-e^{-2\alpha t})/(2\alpha)$; clade-specific optima are encoded by
+painting regimes on the tree~\cite{butler_king_2004}. With a fixed root the leaves are
+jointly Gaussian with the separable Kronecker covariance $C\otimes K$, where $C$ is the
+matrix of shared root-to-most-recent-common-ancestor times.
+
+\subsection*{The observation model}
+The observation model connects the latent leaf state to the data and factorizes across
+entries given the latent. \scphytr{} implements a Poisson model $Y\sim\mathrm{Poisson}(S\,
+e^{z})$ with per-cell size factors $S$; a negative-binomial extension that adds a per-gene
+overdispersion to capture within-clone plasticity beyond Poisson sampling; and a Gaussian
+model used for directly measured traits and as an exact oracle. Because the evolutionary
+parameters live entirely in the latent model and the observation model carries none of
+them, any observation type reuses the same inference engine, and the estimated $K$ is a
+property of evolution rather than of measurement noise.
+
+\subsection*{Linear-time inference}
+The joint latent law is a Gaussian Markov random field whose precision has the sparsity of
+the tree~\cite{rue_held_2005}. For Gaussian observations the marginal likelihood is
+computed exactly by Felsenstein's pruning algorithm~\cite{felsenstein_pruning_1973,
+felsenstein_contrasts_1985}. For non-conjugate observations \scphytr{} forms the
+sparsity-preserving Laplace approximation: it finds the posterior mode by Newton's method
+and evaluates the marginal from the tree-structured precision $Q+W$, where $W$ is the
+diagonal observation curvature, by Gaussian elimination in leaves-to-root order, which
+introduces no fill-in. The multivariate case generalizes this to block elimination with one
+$p\times p$ Cholesky factorization per node, giving cost $O(np^3)$. Parameters are estimated
+by maximum marginal likelihood, either by direct optimization or by Expectation--Maximization
+whose E-step is a Rauch--Tung--Striebel tree smoother reusing the elimination factors and
+whose M-step maximizes the expected complete-data log-likelihood by automatic
+differentiation~\cite{dempster_em_1977, bradbury_jax_2018}. The E-step is pluggable: a
+deterministic Laplace approximation, importance sampling, or Hamiltonian Monte Carlo.
+
+\subsection*{Heritability, rate, selection and plasticity}
+Heritability is quantified by Pagel's $\lambda$~\cite{pagel_lambda_1999}: the off-diagonal
+entries of the tip covariance $C$ are scaled by $\lambda\in[0,1]$, with $\lambda=1$ the full
+tree and $\lambda=0$ a star of independent tips, and $\lambda$ is estimated by maximum
+likelihood with a likelihood-ratio test against $\lambda=0$. Because scaling only the
+off-diagonals leaves a covariance that is no longer generated by a Brownian motion on the
+tree, it loses the tree-Markov sparsity the pruning exploits, so $\lambda$ is the one read-out
+estimated by a dense $O(n^3)$ factorization rather than the linear-time recursion---exact for
+trees and subsamples up to a few thousand tips. The diagonal of $K$ gives per-gene
+evolutionary rates and its off-diagonal the evolutionary correlation matrix. Selection is
+assessed by fitting BM, single-optimum OU and multi-regime OU and comparing them by AIC; an
+OU win indicates a pull toward an optimum and a multi-regime OU win an adaptive shift
+between regimes. Clade-specific \emph{rate} heterogeneity is modelled by O'Meara's
+multi-rate Brownian motion, in which the diffusion rate $\sigma^2$ changes between regimes
+painted on the tree~\cite{omeara_rates_2006}; given regimes the per-regime rates are fit by
+the same linear-time pruning (the root mean profiled out), and when the shifts are unknown
+they are found \emph{de novo} by greedy forward selection that adds the branch most
+improving the BIC, with a $2\log m$ location penalty per shift ($m$ candidate branches) that
+corrects for selecting the best of many branches and controls the null false-positive rate;
+this is the maximum-penalized-likelihood counterpart to RevBayes' reversible-jump MCMC over
+the number and location of shifts~\cite{hohna_revbayes_2016, khabbazian_l1ou_2016}. Within-clone
+plasticity is the negative-binomial overdispersion estimated
+jointly with the latent model, and the heritable-versus-plastic decomposition of a gene is
+the ratio of its between-clone heritable variance to its within-clone variance.
+
+\subsection*{Scalability}
+The batched engine evaluates the per-gene Laplace marginal for all genes at once by carrying
+a gene axis through the tree recursion, so each per-node scalar operation becomes a vector
+operation over genes and the Python-level traversal is paid once for the whole panel; it
+fits BM/OU/OU-regime per gene by maximizing the marginal over a grid of $(\alpha,\sigma^2)$
+with the optimum profiled in closed form. The phylogenetic factor model constrains
+$K = WW^\top + D$ with $k\ll p$ shared latent programs and a per-gene heritable idiosyncratic
+term $D$, fit by Laplace-EM in $O(nk^3)$.
+
+\subsection*{Benchmark design}
+The heritability-detection benchmark simulates, on a fixed tree, traits that are either
+heritable (a Brownian draw with covariance $C$) or plastic (independent across cells),
+generates Poisson counts at a series of mean depths, and scores each method by the AUROC of
+separating heritable from plastic traits. \scphytr{} scores a trait by its Pagel's $\lambda$;
+the EvoGeneX surrogate scores it by the Brownian-motion fit to the per-subline mean of
+$\log(1+\text{count})$; PATH scores it by Moran's $I$ with a node-depth phylogenetic weight
+matrix and a permutation test. The adaptive-detection experiment simulates a down-shift of
+expression in a chosen clade under the alternative and no shift under the null, and reports
+power and false-positive rate as a function of depth.
+
+\subsection*{Datasets}
+The melanoma subline data are the full-length Smart-seq2 single-cell expression of clonal
+sublines of a mouse melanoma model~\cite{hirsch_emt_2025}; raw RSEM expected counts were
+obtained from Gene Expression Omnibus accession GSE215960, mapped to subline labels, and
+analyzed on the published consensus subline phylogeny. The EMT lineage-tracing data are the
+pancreatic-cancer single-cell trees and EMT pseudotime from the PATH
+study~\cite{schiffman_path_2024, simeonov_emt_2021}; per-clone trees and per-cell pseudotime
+were exported from the published data objects. External datasets are not redistributed with
+the software.
+
+\subsection*{Comparison methods}
+PATH was reimplemented as Moran's $I$ with a shared-ancestry phylogenetic weight matrix and a
+permutation null. The EvoGeneX comparison uses \scphytr{}'s own Gaussian phylogenetic
+BM/OU machinery applied to the per-subline mean of $\log(1+\text{count})$, a faithful and
+favorable surrogate for the Gaussian-on-log approach that isolates the effect of the
+observation model. Concordance on real data is reported as the agreement of binary
+heritability calls and the Spearman correlation of the heritability statistics across clones.
+Hotspot~\cite{detomaso_hotspot_2021} was run in its tree (PhyloVision) mode through the
+\texttt{hotspotsc} package. RevBayes~\cite{hohna_revbayes_2016} (v1.4.0) was run on the
+identical tree and trait as a random local clock: each branch carries a reversible-jump
+mixture rate multiplier (no shift, or a lognormal draw) that is inherited by its descendants,
+so a single jump at a clade's base raises the whole clade's rate; the per-branch posterior
+shift probabilities and rates summarize a $5\times10^4$-generation chain. Because RevBayes'
+Brownian REML model requires a bifurcating tree, multifurcating lineage trees were resolved
+to binary with floored branch lengths before both tools were run on real data.
+
+\subsection*{Implementation and code availability}
+\scphytr{} is implemented in Python on top of NumPy, SciPy and JAX, and is available as the
+\texttt{scphytr} package. % TODO: public repository URL and DOI before submission
+
+\section*{Competing interests}
+The authors declare that they have no competing interests.
+
+\section*{Acknowledgements}
+% TODO: funding and acknowledgements.
+
+\bibliographystyle{unsrt}
+\bibliography{references}
+
+% ---------------------------------------------------------------------------
+% Figures (to be generated from analysis/ scripts before submission)
+% ---------------------------------------------------------------------------
+\begin{figure}[t]
+  \centering
+  % \includegraphics[width=\textwidth]{fig1_overview.pdf}
+  \caption{\textbf{\scphytr{} models single-cell gene expression as a latent evolutionary
+  process on the lineage tree.} A latent Brownian-motion or Ornstein--Uhlenbeck state
+  evolves along the tree and is observed as counts at the leaves; one fit yields
+  heritability (Pagel's $\lambda$), selection (drift vs.\ OU optimum), evolutionary rate and
+  gene--gene correlations ($K$), and within-clone plasticity, spanning the read-outs of
+  PATH, EvoGeneX/CAGEE and Hotspot. Source: schematic.}
+  \label{fig:overview}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  % \includegraphics[width=0.7\textwidth]{fig2_depth_auroc.pdf}
+  \caption{\textbf{The count model retains heritability-detection power at low sequencing
+  depth.} AUROC for separating heritable from plastic traits versus mean counts per cell, on
+  ground-truth simulations, for \scphytr{} (counts), an EvoGeneX-style Gaussian-on-log fit,
+  and PATH (Moran's $I$). At one count per cell \scphytr{} reaches AUROC $0.82$ versus
+  $0.66$ and $0.65$ for the Gaussian-on-log methods; all converge by sixty-four counts per
+  cell. Source: \texttt{analysis/benchmark/sim\_heritability.py}.}
+  \label{fig:depth}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  % \includegraphics[width=0.7\textwidth]{fig3_emt_concordance.pdf}
+  \caption{\textbf{\scphytr{}'s heritability statistic reproduces PATH's on the EMT
+  lineage-tracing data.} Per-clone Pagel's $\lambda$ (\scphytr{}) versus Moran's $I$ (PATH)
+  for the EMT pseudotime; the two agree on the heritability call in $90\%$ of clones and rank
+  reliable clones identically (Spearman $\rho = 1.0$ for clones with $\geq 100$ cells).
+  Source: \texttt{analysis/benchmark/emt\_concordance.py}.}
+  \label{fig:emt}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  % \includegraphics[width=\textwidth]{fig4_melanoma.pdf}
+  \caption{\textbf{Heritable-versus-plastic decomposition of melanoma subline expression.}
+  For each gene, heritable (between-subline) versus plastic (within-subline) variance from a
+  single count-based \scphytr{} fit; invasion-associated genes (\emph{Thbs1}, \emph{Adamts1},
+  \emph{Fn1}) are the most plastic and housekeeping genes the most heritable. Source:
+  \texttt{analysis/melanoma/heritable\_vs\_plastic.py}.}
+  \label{fig:melanoma}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  % \includegraphics[width=0.7\textwidth]{fig5_coevolution.pdf}
+  \caption{\textbf{\scphytr{}'s evolutionary correlation matrix recovers co-evolving modules
+  without tree confounding.} Genes simulated as multivariate Brownian motion with a known
+  co-evolving block on real KP-Tracer tumor trees. Power to recover the block versus the
+  false-positive rate among evolutionarily independent gene pairs (nominal $5\%$), at a common
+  BH-FDR. \scphytr{}'s deconfounded $K$ (Felsenstein contrasts) keeps the false rate at
+  $0.4\%$ at full power (AUROC $1.0$); PATH's phylogenetic cross-correlation ($96\%$ false,
+  AUROC $0.74$) and Hotspot's tree-mode local correlation ($73\%$ false, AUROC $0.5$) invent
+  co-evolution from shared ancestry. Source:
+  \texttt{analysis/benchmark/kptracer\_coevolution.py}.}
+  \label{fig:coevo}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  % \includegraphics[width=0.85\textwidth]{fig6_pfa_scaling.pdf}
+  \caption{\textbf{Low-rank factorization scales the evolutionary correlation matrix to the
+  transcriptome.} Counts simulated from a known rank-$k$ program on real KP-Tracer trees
+  ($n = 400$ cells). \textbf{(A)} Poisson phylogenetic factor analysis recovers the planted
+  module (block AUROC) up to $p = 8000$ genes in seconds; the dense $p \times p$ correlation
+  matches recovery only where it can be formed and is rank-deficient (not positive-definite)
+  for $p > n$. \textbf{(B)} Stored parameters: the factor model grows as $p\,k$ while the dense
+  $K$ grows as $p^2/2$ (two orders of magnitude more at $p = 4000$). Source:
+  \texttt{analysis/benchmark/kptracer\_coevolution.py} (\texttt{pfa}).}
+  \label{fig:pfa}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  % \includegraphics[width=\textwidth]{fig7_rateshift.pdf}
+  \caption{\textbf{Clade-specific rate-shift detection: \scphytr{} versus RevBayes.} A
+  continuous trait simulated with one rate shift of known magnitude on $50$-tip trees, given
+  identically to both tools. \textbf{(A)} Fraction of replicates localizing the shift to the
+  true clade (\scphytr{}: BIC-selected shift; RevBayes: branch posterior shift probability
+  $>0.5$) versus shift magnitude. \textbf{(B)} Estimated versus true clade/background rate
+  ratio: \scphytr{} (penalized likelihood) tracks the truth, RevBayes' reversible-jump
+  posterior shrinks toward the null. \scphytr{} runs in $\sim$1\,s per dataset against
+  $\sim$85\,s of MCMC. Source: \texttt{analysis/benchmark/revbayes\_rate\_shifts.py}.}
+  \label{fig:rateshift}
+\end{figure}
+
+\end{document}
