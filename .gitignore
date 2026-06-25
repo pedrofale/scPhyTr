@@ -16,3 +16,5 @@ scphytr.egg-info/
 
 # Large external datasets (KP-Tracer etc.)
 data/external/
+# EvoGeneX bridge scratch (regenerated per run)
+analysis/benchmark/evogenex_work/
