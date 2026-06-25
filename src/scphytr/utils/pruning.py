@@ -90,6 +90,57 @@ def bm_pruning_logpdf(tree, trait_means, K):
     return loglik
 
 
+def bm_rates_pruning_logpdf(tree, rates, regimes, mu=None):
+    """Marginal log-likelihood of one trait under MULTI-RATE Brownian motion (BMS).
+
+    The homogeneous BM rate is replaced by a per-regime rate: the variance an edge
+    contributes is ``branch_length * rates[regime(edge)]``, where the regime painted
+    on a node labels the edge *above* it (the convention of :func:`paint_regimes`).
+    This is O'Meara's noncensored multi-rate BM -- the standard model for
+    clade-specific rate heterogeneity (a rate "shift" at the base of a clade).
+
+    Univariate (one continuous trait); the linear-time Felsenstein pruning is the
+    rate-weighted version of :func:`bm_pruning_logpdf`.
+
+    Parameters
+    ----------
+    tree : scphytr.utils.tree.Tree with a single trait on the leaves.
+    rates : array (n_regimes,) of per-regime BM rates (sigma^2 > 0).
+    regimes : dict[node -> regime id] (see :func:`paint_regimes`).
+    mu : fixed root state. If None it is profiled to its ML value (the pruned root
+        message mean), so only the rates need to be optimized.
+    """
+    name = tree.get_trait_names()[0]
+    rates = np.asarray(rates, dtype=float)
+    loglik = 0.0
+
+    def descend(node):
+        nonlocal loglik
+        if node.is_leaf():
+            return float(node.trait[name]), 0.0
+        children = node.children
+        m_acc, v_acc = descend(children[0])
+        v_acc = v_acc + children[0].dist * rates[regimes[children[0]]]
+        for child in children[1:]:
+            m_c, v_c = descend(child)
+            v_c = v_c + child.dist * rates[regimes[child]]
+            w = v_acc + v_c
+            d = m_acc - m_c
+            loglik += -0.5 * (np.log(2.0 * np.pi * w) + d * d / w)
+            v_new = 1.0 / (1.0 / v_acc + 1.0 / v_c)
+            m_acc = v_new * (m_acc / v_acc + m_c / v_c)
+            v_acc = v_new
+        return m_acc, v_acc
+
+    m_root, v_root = descend(tree.root)
+    v_root = v_root + tree.root.dist * rates[regimes[tree.root]]
+    if mu is None:
+        mu = m_root                       # profiled ML root state
+    d = m_root - mu
+    loglik += -0.5 * (np.log(2.0 * np.pi * v_root) + d * d / v_root)
+    return loglik
+
+
 def _ou_branch(alpha, t):
     """OU per-branch contraction ``phi = e^{-alpha t}`` and variance factor
     ``v(t) = (1 - e^{-2 alpha t}) / (2 alpha)``. Stable as alpha -> 0 (v -> t)."""

@@ -15,7 +15,8 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 
-from ..utils.pruning import bm_pruning_logpdf, ou_pruning_logpdf
+from ..utils.pruning import (bm_pruning_logpdf, ou_pruning_logpdf,
+                             bm_rates_pruning_logpdf, paint_regimes)
 from ..inference.tree_laplace import latent_tree_laplace_marginal
 
 
@@ -164,6 +165,106 @@ def fit_ou_regimes(tree, values, regimes, n_regimes, alpha_inits=(0.1, 1.0, 5.0)
     return FittedModel(f"OU{n_regimes}", loglik=-best.fun, n_params=n_regimes + 2, n_obs=n,
                        params={"alpha": alpha, "thetas": thetas.tolist(),
                                "sigma2": float(np.exp(best.x[-1])), "n_regimes": n_regimes})
+
+
+# ---------------------------------------------------------------------------
+# Clade-specific RATE heterogeneity: multi-rate Brownian motion (O'Meara's BMS).
+# Unlike fit_ou_regimes (which varies the OU *optimum* per regime at a shared
+# rate), these vary the diffusion *rate* sigma^2 per regime -- the model RevBayes
+# fits with reversible-jump MCMC. fit_bm_rates scores a *given* regime painting;
+# detect_rate_shifts searches for the shifts *de novo* by penalized likelihood.
+# ---------------------------------------------------------------------------
+
+def fit_bm_rates(tree, values, regimes, n_regimes, restarts=2, seed=0):
+    """Fit multi-rate BM: one diffusion rate sigma^2 per painted regime.
+
+    ``regimes`` maps each node to a regime id in [0, n_regimes) (the edge above the
+    node; see :func:`paint_regimes`). The root mean is profiled out, so only the
+    rates are optimized; the parameter count is ``n_regimes + 1`` (rates + root).
+    """
+    _set_single_trait(tree, values)
+    n = len(values)
+    x = np.asarray(list(values.values()), dtype=float)
+    var0 = max(np.var(x), 1e-6)
+
+    def nll(logr):
+        ll = bm_rates_pruning_logpdf(tree, np.exp(logr), regimes)
+        return -ll if np.isfinite(ll) else 1e18
+
+    rng = np.random.default_rng(seed)
+    inits = [np.log(np.full(n_regimes, var0))]
+    inits += [np.log(np.full(n_regimes, var0)) + 0.5 * rng.standard_normal(n_regimes)
+              for _ in range(restarts)]
+    best = None
+    for p0 in inits:
+        res = minimize(nll, p0, method="Nelder-Mead",
+                       options={"xatol": 1e-6, "fatol": 1e-8, "maxiter": 4000})
+        if best is None or res.fun < best.fun:
+            best = res
+    rates = np.exp(best.x)
+    return FittedModel(f"BMS{n_regimes}", loglik=-best.fun, n_params=n_regimes + 1, n_obs=n,
+                       params={"rates": rates.tolist(), "n_regimes": n_regimes})
+
+
+def detect_rate_shifts(tree, values, max_shifts=5, criterion="bic", min_clade=5,
+                       seed=0):
+    """De-novo BM rate-shift detection by greedy penalized-likelihood selection.
+
+    Starting from a single global rate, repeatedly add the branch whose rate shift
+    most improves the (selection-corrected) ``criterion``, stopping when no shift
+    helps. This is the maximum-penalized-likelihood counterpart to RevBayes' Bayesian
+    reversible-jump search over the number and location of rate shifts: it returns a
+    single best configuration (fast, O(n) per likelihood) rather than a posterior.
+
+    Because each shift is the *best of* ~``m`` candidate branches, plain BIC badly
+    over-selects (the maximum BIC drop over many tests is upward-biased). We add a
+    location penalty of ``2 log m`` per shift -- a phylogenetic-BIC-style correction
+    (cf. l1ou) for choosing where the shift goes -- which controls the null
+    false-positive rate while retaining power on real shifts.
+
+    Returns a dict with ``shifts`` (list of shift nodes, in the order added),
+    ``regimes``/``n_regimes`` (final painting), ``fit`` (the chosen FittedModel),
+    ``score_path`` (corrected criterion after each accepted shift) and ``baseline``.
+    """
+    _set_single_trait(tree, values)
+    n = len(values)
+    root = tree.root
+    base_crit = (lambda m: m.bic()) if criterion == "bic" else (lambda m: m.aicc())
+
+    candidates = [nd for nd in root.traverse()
+                  if nd is not root and not nd.is_leaf()
+                  and min_clade <= len(nd.get_leaves()) <= n - min_clade]
+    loc_pen = 2.0 * np.log(max(len(candidates), 2))   # per-shift location penalty
+
+    def crit(m, n_sh):
+        return base_crit(m) + loc_pen * n_sh
+
+    regimes0, nreg0 = paint_regimes(tree, [])
+    base = fit_bm_rates(tree, values, regimes0, nreg0, seed=seed)
+    best_fit, best_regimes, best_nreg = base, regimes0, nreg0
+    shifts, score_path = [], [crit(base, 0)]
+    cur = crit(base, 0)
+
+    while len(shifts) < max_shifts:
+        pick = None
+        for nd in candidates:
+            if nd in shifts:
+                continue
+            regimes, nreg = paint_regimes(tree, shifts + [nd])
+            fm = fit_bm_rates(tree, values, regimes, nreg, restarts=1, seed=seed)
+            sc = crit(fm, len(shifts) + 1)
+            if pick is None or sc < pick[1]:
+                pick = (nd, sc, fm, regimes, nreg)
+        if pick is None or pick[1] >= cur - 1e-6:     # no shift improves the criterion
+            break
+        nd, cur, fm, best_regimes, best_nreg = pick
+        shifts.append(nd)
+        best_fit = fm
+        score_path.append(cur)
+
+    return {"shifts": shifts, "regimes": best_regimes, "n_regimes": best_nreg,
+            "fit": best_fit, "baseline": base, "score_path": score_path,
+            "criterion": criterion}
 
 
 _FITTERS = {"BM": fit_bm, "OU": fit_ou}
