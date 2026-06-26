@@ -50,6 +50,8 @@ from .poisson_factor import (
 from .api import (
     estimate_rate,
     heritability,
+    detect_adaptive,
+    plasticity,
     detect_rate_shifts,
     evolutionary_correlation,
     factor_analysis,
@@ -97,6 +99,8 @@ __all__ = [
     # AnnData-facing read-outs (tl.*).
     "estimate_rate",
     "heritability",
+    "detect_adaptive",
+    "plasticity",
     "detect_rate_shifts",
     "evolutionary_correlation",
     "factor_analysis",

@@ -28,13 +28,21 @@ def _gene_counts(adata, gene):
     return (X.toarray() if hasattr(X, "toarray") else np.asarray(X)).astype(float).ravel()
 
 
-def _leaf_trait(adata, gene, leaves):
-    """Per-leaf mean log1p expression (leaf-level; used by the Gaussian read-outs)."""
-    y = _gene_counts(adata, gene)
-    s = adata.obs[adata.uns.get("_size_factor_obs", "size_factors")].values
-    ln = np.log1p(y / np.maximum(s, 1e-9))
-    df = pd.DataFrame({"v": ln, "s": np.asarray(adata.obs[adata.uns["_species_obs"]]).astype(str)})
-    m = df.groupby("s")["v"].mean()
+def _leaf_trait(adata, character, leaves):
+    """Per-leaf trait for ``character`` (a gene -> mean log1p expr, or an obs column -> mean).
+
+    Leaf-level (one value per leaf); used by the Gaussian read-outs (λ, de-novo rate shifts).
+    """
+    sp = np.asarray(adata.obs[adata.uns["_species_obs"]]).astype(str)
+    if character in adata.var_names:
+        y = _gene_counts(adata, character)
+        s = adata.obs[adata.uns.get("_size_factor_obs", "size_factors")].values
+        v = np.log1p(y / np.maximum(np.asarray(s, float), 1e-9))
+    elif character in adata.obs:
+        v = np.asarray(adata.obs[character].values, dtype=float)
+    else:
+        raise KeyError(f"character '{character}' is not a gene (var_names) or obs column")
+    m = pd.Series(v).groupby(sp).mean()
     return {l: float(m.get(l, 0.0)) for l in leaves}
 
 
@@ -79,6 +87,56 @@ def heritability(adata, genes=None):
         lam[g], pval[g] = r["lambda"], r["p"]
     adata.var["lambda"] = pd.Series(lam).reindex(adata.var_names)
     adata.var["lambda_p"] = pd.Series(pval).reindex(adata.var_names)
+    return adata
+
+
+def detect_adaptive(adata, genes=None, regimes=None, n_regimes=None, dispersion=None,
+                    criterion="aic"):
+    """Per-gene BM vs OU vs two-regime OU on the subclonal count model (no pseudobulk).
+
+    Fits each model by the validated count-marginal (cells as replicates) and selects by AIC;
+    stores ``var['adaptive_model']`` (BM/OU/OU2) and ``var['adaptive']`` (OU/OU2 win). Pass a
+    regime painting (``regimes``, ``n_regimes`` from ``paint_regimes`` / ``load_regimes``) to
+    include the adaptive two-optimum model.
+    """
+    tree, leaves, idx, sf = _ctx(adata)
+    genes = list(adata.var_names) if genes is None else list(genes)
+    crit = (lambda m: m.aic()) if criterion == "aic" else (lambda m: m.bic())
+    sel, adaptive = {}, {}
+    for g in genes:
+        y = _gene_counts(adata, g)
+        obs = SubclonalObservation(y, sf, idx, len(leaves), dispersion=dispersion)
+        cands = {"BM": _ms.fit_bm_counts(tree, obs), "OU": _ms.fit_ou_counts(tree, obs)}
+        if regimes is not None:
+            cands["OU2"] = _ms.fit_ou_regimes_counts(tree, obs, regimes, n_regimes)
+        best = min(cands, key=lambda k: crit(cands[k]))
+        sel[g], adaptive[g] = best, int(best in ("OU", "OU2"))
+    adata.var["adaptive_model"] = pd.Series(sel).reindex(adata.var_names)
+    adata.var["adaptive"] = pd.Series(adaptive).reindex(adata.var_names)
+    return adata
+
+
+def plasticity(adata, genes, dispersion=10.0):
+    """Heritable vs within-clone plastic variance per gene (the subclonal replicates at work).
+
+    Jointly fits the BM diffusion K and a per-gene within-clone NB dispersion r by Laplace-EM,
+    then stores ``var['v_herit']`` (between-clone, K_gg·T), ``var['v_plast']`` (within-clone,
+    ψ₁(r)) and ``var['plasticity']`` = V_plast/(V_plast+V_herit) ∈ [0,1].
+    """
+    from .em import fit_mv_em
+    from scipy.special import polygamma
+    from ..inference.laplace import MultiCellPoissonObservation
+    tree, leaves, idx, sf = _ctx(adata)
+    genes = list(genes)
+    X = adata[:, genes].X
+    X = (X.toarray() if hasattr(X, "toarray") else np.asarray(X)).astype(float)
+    obs = MultiCellPoissonObservation(X, sf, idx, len(leaves), dispersion=dispersion)
+    res = fit_mv_em(tree, obs, model="BM", fit_dispersion=True, max_em=30)
+    T = float(tree.root.get_farthest_leaf()[1]) + float(tree.root.dist)
+    K = np.asarray(res.covariance()); r = res.extra["dispersion"]
+    Vh = np.diag(K) * T; Vp = polygamma(1, r); frac = Vp / (Vp + Vh)
+    for col, val in [("v_herit", Vh), ("v_plast", Vp), ("plasticity", frac)]:
+        adata.var[col] = pd.Series(dict(zip(genes, val))).reindex(adata.var_names)
     return adata
 
 
