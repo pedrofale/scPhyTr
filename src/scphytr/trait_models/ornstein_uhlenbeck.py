@@ -49,3 +49,28 @@ class OrnsteinUhlenbeck(BaseTraitModel):
 
     def set_trait_cov_matrix(self, rates):
         self.trait_cov_matrix = np.diag(np.asarray(rates, dtype=float).ravel())
+
+    # ----- modular Laplace contract (univariate) ----------------------------------
+    def _alpha_max(self):
+        H = float(self.tree.root.get_farthest_leaf()[1]) + float(self.tree.root.dist)
+        return 30.0 / max(H, 1e-12)
+
+    def process_params(self):
+        """(alpha, theta, sigma2, regimes, root_value) for the Laplace/pruning engine."""
+        K = np.atleast_2d(np.asarray(self.trait_cov_matrix, dtype=float))
+        th = float(np.ravel(self.theta)[0])
+        return dict(alpha=float(self.alpha), theta=th, sigma2=float(K.ravel()[0]),
+                    regimes=getattr(self, "regimes", None),
+                    n_regimes=getattr(self, "n_regimes", 1),
+                    root_value=th, rates=None)
+
+    def pack(self):
+        K = np.atleast_2d(np.asarray(self.trait_cov_matrix, dtype=float))
+        return np.array([np.log(max(self.alpha, 1e-6)), float(np.ravel(self.theta)[0]),
+                         np.log(max(float(K.ravel()[0]), 1e-9))], float)
+
+    def unpack(self, x):
+        self.alpha = float(np.clip(np.exp(x[0]), 1e-4, self._alpha_max()))
+        self.theta = np.array([float(x[1])])
+        self.trait_cov_matrix = np.array([[float(np.exp(x[2]))]])
+        self.root_value = np.array([float(x[1])])

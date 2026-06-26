@@ -274,3 +274,23 @@ class BrownianMotion(BaseTraitModel):
         ])
         loc = jnp.reshape(variational_means, [-1])                    # vec(M)
         return tfd.MultivariateNormalLinearOperator(loc=loc, scale=op).kl_divergence(tfd.MultivariateNormalFullCovariance(loc=a, covariance_matrix=V))
+
+    # ----- modular Laplace contract (univariate) ----------------------------------
+    @staticmethod
+    def _scalar(a):
+        a = a.values if hasattr(a, "values") else a
+        return float(np.ravel(np.asarray(a, dtype=float))[0])
+
+    def process_params(self):
+        """(alpha=0 for BM, theta=root mean, sigma2, regimes, root_value) for the engine."""
+        mu = self._scalar(self.trait_means)
+        return dict(alpha=0.0, theta=mu, sigma2=self._scalar(self.trait_cov_matrix),
+                    regimes=None, n_regimes=1, root_value=mu, rates=None)
+
+    def pack(self):
+        return np.array([self._scalar(self.trait_means),
+                         np.log(max(self._scalar(self.trait_cov_matrix), 1e-9))], float)
+
+    def unpack(self, x):
+        self.trait_means = np.array([float(x[0])])
+        self.trait_cov_matrix = np.array([[float(np.exp(x[1]))]])
