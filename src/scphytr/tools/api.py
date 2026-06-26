@@ -91,13 +91,14 @@ def heritability(adata, genes=None):
 
 
 def detect_adaptive(adata, genes=None, regimes=None, n_regimes=None, dispersion=None,
-                    criterion="aic"):
-    """Per-gene BM vs OU vs two-regime OU on the subclonal count model (no pseudobulk).
+                    models=("BM", "OU", "OU2"), criterion="aic"):
+    """Per-gene model selection over the subclonal count model (no pseudobulk).
 
-    Fits each model by the validated count-marginal (cells as replicates) and selects by AIC;
-    stores ``var['adaptive_model']`` (BM/OU/OU2) and ``var['adaptive']`` (OU/OU2 win). Pass a
-    regime painting (``regimes``, ``n_regimes`` from ``paint_regimes`` / ``load_regimes``) to
-    include the adaptive two-optimum model.
+    Fits the requested ``models`` by the validated count-marginal (cells as replicates) and
+    selects by ``criterion``; stores ``var['adaptive_model']`` and ``var['adaptive']`` (OU/OU2
+    win). ``"OU2"`` (two-regime adaptive) needs a regime painting (``regimes``, ``n_regimes``
+    from ``paint_regimes`` / ``load_regimes``); pass e.g. ``models=("BM","OU2")`` for a direct
+    BM-vs-adaptive test.
     """
     tree, leaves, idx, sf = _ctx(adata)
     genes = list(adata.var_names) if genes is None else list(genes)
@@ -106,8 +107,12 @@ def detect_adaptive(adata, genes=None, regimes=None, n_regimes=None, dispersion=
     for g in genes:
         y = _gene_counts(adata, g)
         obs = SubclonalObservation(y, sf, idx, len(leaves), dispersion=dispersion)
-        cands = {"BM": _ms.fit_bm_counts(tree, obs), "OU": _ms.fit_ou_counts(tree, obs)}
-        if regimes is not None:
+        cands = {}
+        if "BM" in models:
+            cands["BM"] = _ms.fit_bm_counts(tree, obs)
+        if "OU" in models:
+            cands["OU"] = _ms.fit_ou_counts(tree, obs)
+        if "OU2" in models and regimes is not None:
             cands["OU2"] = _ms.fit_ou_regimes_counts(tree, obs, regimes, n_regimes)
         best = min(cands, key=lambda k: crit(cands[k]))
         sel[g], adaptive[g] = best, int(best in ("OU", "OU2"))

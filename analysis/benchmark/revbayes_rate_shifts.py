@@ -33,7 +33,7 @@ from ete3 import Tree as ETree
 
 from scphytr.utils.tree import Tree
 from scphytr.utils.pruning import paint_regimes
-from scphytr.tools.model_selection import fit_bm, detect_rate_shifts
+from scphytr.tools import detect_rate_shifts   # scPhyTr's public scanpy-like API (ph.tl)
 
 RB = os.environ.get("RB") or shutil.which("rb") or os.path.expanduser(
     "~/opt/revbayes-v1.4.0/bin/rb")

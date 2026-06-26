@@ -23,8 +23,7 @@ import pandas as pd
 
 from analysis.melanoma.load import (load_cells, load_counts, tree_leaves,
                                      load_tree, load_regimes, _REGIME_DIR)
-from scphytr.inference.laplace import MultiCellPoissonObservation
-from scphytr.tools.model_selection import fit_bm_counts, fit_ou_regimes_counts
+# scPhyTr's adaptive read-out is run through the public scanpy-like API (ph.pp / ph.tl).
 
 OUT = os.path.dirname(__file__)
 REVO = os.environ.get("REVO", os.path.expanduser("~/miniconda3/envs/revo/bin"))
@@ -73,23 +72,27 @@ def run_evogenex(gene_list, logX, all_genes, clone, regime="har"):
 
 
 def run_scphytr(gene_list, regime="har"):
-    """scPhyTr adaptive (BM vs two-regime OU) on per-cell counts, AIC call per gene."""
+    """scPhyTr adaptive (BM vs two-regime OU) via the public scanpy-like API (no pseudobulk).
+
+    Uses ``ph.pp.setup_anndata`` + ``ph.tl.detect_adaptive(models=("BM","OU2"))``, the same
+    subclonal count-model BM-vs-adaptive test, just through the public interface.
+    """
+    import anndata as adata_mod
+    import scphytr as ph
     X, genes, clone, sf = load_counts()
     tree = load_tree()
-    leaves = tree_leaves()
     regimes, n_reg = load_regimes(tree, regime)
-    leaf_of = {s: i for i, s in enumerate(leaves)}
-    idx = np.array([leaf_of[c] for c in clone])
-    gpos = {g: i for i, g in enumerate(genes)}
-    rows = []
-    for g in gene_list:
-        y = X[:, gpos[g]].astype(float)[:, None]
-        obs = MultiCellPoissonObservation(y, sf, idx, len(leaves), univariate=True)
-        bm = fit_bm_counts(tree, obs)
-        ou2 = fit_ou_regimes_counts(tree, obs, regimes, n_reg)
-        rows.append({"gene": g, "bm_aic": bm.aic(), "ou2_aic": ou2.aic(),
-                     "adaptive_aic": int(ou2.aic() < bm.aic())})
-    return pd.DataFrame(rows)
+    A = adata_mod.AnnData(X=X.astype(float))
+    A.var_names = list(genes)
+    A.obs["species"] = clone
+    A.obs["size_factors"] = sf
+    ph.pp.setup_anndata(A, tree)
+    ph.tl.detect_adaptive(A, genes=list(gene_list), regimes=regimes, n_regimes=n_reg,
+                          models=("BM", "OU2"))
+    out = A.var.loc[list(gene_list), ["adaptive"]].astype(int)
+    out.columns = ["adaptive_aic"]
+    out["gene"] = out.index
+    return out.reset_index(drop=True)
 
 
 def main(n_genes=30, regime="har"):
