@@ -10,6 +10,8 @@ from .model_selection import (
     select_model,
     detect_adaptive,
     detect_adaptive_counts,
+    fit_bm_rates,
+    detect_rate_shifts,
 )
 from .adaptive import detect_adaptive_genes, detect_adaptive_traits
 from .estimation import (
