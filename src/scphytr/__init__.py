@@ -18,12 +18,13 @@ tl = tools
 pp = preprocessing
 pl = plotting
 
-from .simulation import simulate, simulate_anndata
+from .simulation import simulate, simulate_anndata, simulate_panel
 
 __version__ = "0.0.0"
 __all__ = [
     "simulate",
     "simulate_anndata",
+    "simulate_panel",
     "utils",
     "inference",
     "observation_models",

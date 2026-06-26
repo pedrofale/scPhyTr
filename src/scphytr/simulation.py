@@ -74,6 +74,55 @@ def simulate(tree, trait_model, observation=None, n_cells=1, mean_size=2000.0,
     return out
 
 
+def simulate_panel(tree, K, mu=None, dispersion=None, n_cells=4, mean_size=500.0,
+                   gene_names=None, seed=0):
+    """Simulate a panel of *correlated* genes and return an AnnData ready for ``pp``/``tl``.
+
+    The genes evolve as a multivariate Brownian motion with diffusion matrix ``K`` (its diagonal
+    is each gene's rate / heritability, the off-diagonal is gene-gene co-evolution), observed as
+    subclonal counts with optional per-gene within-clone negative-binomial dispersion (small
+    dispersion ``r`` = plastic). The ground truth is stored for recovery checks:
+    ``var['true_rate']`` (diag K), ``var['true_dispersion']``, and ``uns['true_K','true_K_corr']``.
+    """
+    import anndata as ad
+    rng = np.random.default_rng(seed)
+    K = np.asarray(K, dtype=float)
+    p = K.shape[0]
+    mu = np.zeros(p) if mu is None else np.asarray(mu, dtype=float).ravel()
+    cholK = np.linalg.cholesky(K + 1e-9 * np.eye(p))
+    root = tree.root
+    Z = {root: mu.copy()}
+    for nd in root.traverse("preorder"):
+        if nd is root:
+            continue
+        Z[nd] = Z[nd.up] + np.sqrt(nd.dist) * (cholK @ rng.standard_normal(p))
+    leaves = root.get_leaves()
+    names = [l.name for l in leaves]
+    Zleaf = np.array([Z[l] for l in leaves])                       # (n_leaves, p)
+
+    idx = np.repeat(np.arange(len(leaves)), n_cells)
+    sizes = rng.gamma(4.0, mean_size / 4.0, size=idx.shape[0]) / mean_size
+    lam = (sizes * mean_size)[:, None] * np.exp(Zleaf[idx])        # (n_cells_total, p)
+    if dispersion is None:
+        Y = rng.poisson(lam)
+    else:
+        r = np.broadcast_to(np.asarray(dispersion, dtype=float).ravel(), (p,))
+        Y = rng.poisson(rng.gamma(r[None, :], lam / r[None, :]))
+
+    A = ad.AnnData(X=Y.astype(float))
+    A.var_names = list(gene_names) if gene_names is not None else [f"gene{g}" for g in range(p)]
+    A.obs["species"] = [names[i] for i in idx]
+    A.obs["size_factors"] = sizes
+    d = np.sqrt(np.clip(np.diag(K), 1e-12, None))
+    A.var["true_rate"] = np.diag(K)
+    if dispersion is not None:
+        A.var["true_dispersion"] = np.broadcast_to(np.asarray(dispersion, float).ravel(), (p,))
+    A.uns["true_K"] = K
+    A.uns["true_K_corr"] = K / np.outer(d, d)
+    A.uns["true_latent"] = Zleaf
+    return A
+
+
 def simulate_anndata(tree, trait_models, observation="subclonal", n_cells=3, seed=0, **kw):
     """Simulate ``len(trait_models)`` genes and pack them into an AnnData ready for ``pp``.
 
