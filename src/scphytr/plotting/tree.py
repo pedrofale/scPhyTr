@@ -84,7 +84,14 @@ def plot_tree(tree, node_values=None, ax=None, cmap="viridis", vmin=None, vmax=N
     return ax
 
 
-def rate_tree(tree, shifts, ax=None, cmap="coolwarm", log=True, mark_shifts=True,
+def _resolve_tree_shifts(tree, shifts):
+    """Accept (tree, shifts) or an AnnData carrying uns['tree'] + uns['rate_shifts']."""
+    if hasattr(tree, "uns") and shifts is None:
+        return tree.uns["tree"], tree.uns["rate_shifts"]
+    return tree, shifts
+
+
+def rate_tree(tree, shifts=None, ax=None, cmap="coolwarm", log=True, mark_shifts=True,
               annotate=True, title=None, **kwargs):
     """Colour the phylogeny by each clade's evolutionary rate from ``detect_rate_shifts``.
 
@@ -95,6 +102,7 @@ def rate_tree(tree, shifts, ax=None, cmap="coolwarm", log=True, mark_shifts=True
     log : colour by ``log10`` rate (recommended; rates span orders of magnitude).
     mark_shifts : star the branch where each rate shift begins.
     """
+    tree, shifts = _resolve_tree_shifts(tree, shifts)
     root = _root_of(tree)
     regimes = shifts["regimes"]
     rates = list(shifts["fit"].params["rates"])

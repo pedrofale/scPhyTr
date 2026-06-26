@@ -43,6 +43,17 @@ from .poisson_factor import (
     fit_poisson_factor_analysis,
     simulate_poisson_pfa,
 )
+# AnnData-facing read-outs (scanpy-like tl.*), routed through the modular backend.
+# These intentionally shadow the lower-level helpers of the same name (estimate_rate,
+# detect_rate_shifts) with the adata-aware versions; detect_rate_shifts dispatches so the
+# (tree, values) form still works.
+from .api import (
+    estimate_rate,
+    heritability,
+    detect_rate_shifts,
+    evolutionary_correlation,
+    factor_analysis,
+)
 
 __all__ = [
     "FittedModel",
@@ -83,4 +94,10 @@ __all__ = [
     "FittedPoissonFactorModel",
     "fit_poisson_factor_analysis",
     "simulate_poisson_pfa",
+    # AnnData-facing read-outs (tl.*).
+    "estimate_rate",
+    "heritability",
+    "detect_rate_shifts",
+    "evolutionary_correlation",
+    "factor_analysis",
 ]
