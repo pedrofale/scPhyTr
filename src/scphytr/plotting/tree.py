@@ -31,16 +31,42 @@ def _layout(root):
     return x, y
 
 
-def plot_tree(tree, node_values=None, ax=None, cmap="viridis", vmin=None, vmax=None,
+def _adata_leaf_values(adata, color):
+    """Per-leaf value for ``color`` (a gene in var_names -> mean log1p expr, or an obs column)."""
+    import pandas as pd
+    sp = np.asarray(adata.obs[adata.uns.get("_species_obs", "species")]).astype(str)
+    if color in adata.var_names:
+        X = adata[:, color].X
+        v = (X.toarray() if hasattr(X, "toarray") else np.asarray(X)).astype(float).ravel()
+        sf = np.asarray(adata.obs.get(adata.uns.get("_size_factor_obs", "size_factors"), 1.0), float)
+        v = np.log1p(v / np.maximum(sf, 1e-9))
+    elif color in adata.obs:
+        v = np.asarray(adata.obs[color].values, float)
+    else:
+        raise KeyError(f"color '{color}' is not a gene (var_names) or obs column")
+    return pd.Series(v).groupby(sp).mean().to_dict()
+
+
+def plot_tree(tree, node_values=None, color=None, ax=None, cmap="viridis", vmin=None, vmax=None,
               label_leaves=True, linewidth=2.2, cbar_label="value", title=None):
     """Draw a phylogram, colouring the branch above each node by ``node_values[node]``.
 
     Parameters
     ----------
-    tree : scphytr ``Tree`` / ete3 node.
+    tree : scphytr ``Tree`` / ete3 node, or an ``AnnData`` (then the tree is ``uns['tree']``).
     node_values : dict {node -> float}, optional. Branches without a value are drawn grey.
+    color : when ``tree`` is an AnnData, a gene name or obs column to colour leaves by.
     Returns the matplotlib ``Axes``.
     """
+    if hasattr(tree, "uns"):                                   # AnnData
+        adata = tree
+        leaf_vals = _adata_leaf_values(adata, color) if color is not None else {}
+        tree = adata.uns["tree"]
+        root = _root_of(tree)
+        node_values = {lf: leaf_vals[lf.name] for lf in root.get_leaves() if lf.name in leaf_vals}
+        if title is None and color is not None:
+            title = str(color)
+        cbar_label = str(color) if color is not None else cbar_label
     root = _root_of(tree)
     x, y = _layout(root)
     leaves = root.get_leaves()
