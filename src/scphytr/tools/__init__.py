@@ -47,12 +47,14 @@ from .poisson_factor import (
 # These intentionally shadow the lower-level helpers of the same name (estimate_rate,
 # detect_rate_shifts) with the adata-aware versions; detect_rate_shifts dispatches so the
 # (tree, values) form still works.
+from .covariate_rates import fit_covariate_rates, reconstruct_states
 from .api import (
     estimate_rate,
     heritability,
     detect_adaptive,
     plasticity,
     detect_rate_shifts,
+    covariate_rate_shifts,
     evolutionary_correlation,
     factor_analysis,
 )
@@ -102,6 +104,10 @@ __all__ = [
     "detect_adaptive",
     "plasticity",
     "detect_rate_shifts",
+    "covariate_rate_shifts",
     "evolutionary_correlation",
     "factor_analysis",
+    # Covariate-associated (state-dependent) rate shifts.
+    "fit_covariate_rates",
+    "reconstruct_states",
 ]

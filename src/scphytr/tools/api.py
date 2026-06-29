@@ -28,6 +28,28 @@ def _gene_counts(adata, gene):
     return (X.toarray() if hasattr(X, "toarray") else np.asarray(X)).astype(float).ravel()
 
 
+def _leaf_label(adata, obs, leaves, max_states=12):
+    """Per-leaf discrete covariate label for ``obs`` (cells -> leaf by majority vote).
+
+    Each leaf (subclone, or a single cell in a single-cell tree) takes the most common value of
+    ``adata.obs[obs]`` among its cells. Leaves with no cells fall back to the global majority.
+    Raises if the covariate resolves to more than ``max_states`` distinct values (it is meant
+    to be categorical -- e.g. clone or niche; bin a continuous covariate first).
+    """
+    sp = np.asarray(adata.obs[adata.uns["_species_obs"]]).astype(str)
+    lab = pd.Series(np.asarray(adata.obs[obs]).astype(str), name="lab")
+    df = pd.DataFrame({"sp": sp, "lab": lab})
+    maj = df.groupby("sp")["lab"].agg(lambda s: s.value_counts().idxmax())
+    fallback = lab.value_counts().idxmax()
+    out = {l: str(maj.get(l, fallback)) for l in leaves}
+    n_states = len(set(out.values()))
+    if n_states > max_states:
+        raise ValueError(
+            f"covariate '{obs}' resolves to {n_states} states (> max_states={max_states}); "
+            "it must be categorical (e.g. clone or niche). Bin a continuous covariate first.")
+    return out
+
+
 def _leaf_trait(adata, character, leaves):
     """Per-leaf trait for ``character`` (a gene -> mean log1p expr, or an obs column -> mean).
 
@@ -164,6 +186,45 @@ def detect_rate_shifts(data, *args, character=None, max_shifts=4, criterion="bic
     adata.uns["rate_shifts"] = res
     adata.uns["rate_shifts_character"] = character
     return res
+
+
+def covariate_rate_shifts(adata, obs, genes=None, character=None, key="cov_rate"):
+    """Test whether a discrete covariate (``adata.obs[obs]``) carries state-specific BM rates.
+
+    The covariate (e.g. ``clone`` or spatial ``niche``) is reconstructed onto the branches by
+    parsimony and a state-dependent multi-rate BM is fit and LR-tested against a single global
+    rate -- the ML counterpart to RevBayes' state-dependent BM (see
+    :func:`scphytr.tools.covariate_rates.fit_covariate_rates`).
+
+    Tests one ``character`` (a gene or obs column) or, by default, every gene in ``genes``
+    (all var_names). For a single character the full result is stored in
+    ``uns['covariate_rates']`` (with the branch ``regimes`` for ``pl.rate_tree``); for many
+    genes, per-gene ``var[key+'_p']`` (LRT p), ``var[key+'_ratio']`` (max/min state rate) and
+    ``var[key+'_fastest']`` (fastest state) are written alongside the full results in ``uns``.
+    """
+    from .covariate_rates import fit_covariate_rates
+    tree, leaves, idx, sf = _ctx(adata)
+    labels = _leaf_label(adata, obs, leaves)
+    single = character is not None
+    chars = [character] if single else (list(genes) if genes is not None else list(adata.var_names))
+    results, p_, ratio_, fast_ = {}, {}, {}, {}
+    for ch in chars:
+        vals = _leaf_trait(adata, ch, leaves)
+        if np.allclose(list(vals.values()), list(vals.values())[0]):
+            continue
+        r = fit_covariate_rates(tree, vals, labels)
+        results[ch] = r
+        p_[ch], ratio_[ch], fast_[ch] = r["p"], r["rate_ratio"], r["fastest_state"]
+    store = {"obs": obs, "results": results}
+    if single and character in results:
+        store.update(results[character])               # regimes/state_names/rates for plotting
+        store["character"] = character
+    else:
+        adata.var[key + "_p"] = pd.Series(p_).reindex(adata.var_names)
+        adata.var[key + "_ratio"] = pd.Series(ratio_).reindex(adata.var_names)
+        adata.var[key + "_fastest"] = pd.Series(fast_).reindex(adata.var_names)
+    adata.uns["covariate_rates"] = store
+    return results[character] if single else results
 
 
 def evolutionary_correlation(adata, genes, dispersion=None, key="K"):
