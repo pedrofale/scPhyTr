@@ -139,9 +139,26 @@ def _bm_field(tree, p, rates, rng, root_value=None):
     return np.array([Z[l] for l in leaves]), leaves
 
 
+def _clonal_coords(tree, dim, seed, shape_scale=16):
+    """Territorial coordinates via Cassiopeia's ``ClonalSpatialDataSimulator`` (subclones placed as
+    contiguous spatial domains). Returns ``(n_leaves, dim)`` in ``get_leaf_names()`` order.
+
+    Requires ``cassiopeia-lineage`` (imported lazily; only the ``growth='clonal'`` mode needs it).
+    """
+    from cassiopeia.data import CassiopeiaTree
+    from cassiopeia.simulator.ClonalSpatialDataSimulator import ClonalSpatialDataSimulator
+    leaves = tree.phylotree.get_leaf_names()
+    side = max(128, int(shape_scale * np.sqrt(len(leaves))))
+    ct = CassiopeiaTree(tree=tree.phylotree.write(format=5))
+    ClonalSpatialDataSimulator(shape=(side,) * dim, random_seed=int(seed) % (2 ** 31)
+                               ).overlay_data(ct, attribute_key="spatial")
+    cols = [f"spatial_{i}" for i in range(dim)]
+    return ct.cell_meta.loc[leaves, cols].values.astype(float)
+
+
 def simulate_spatial_panel(tree, sigma2_phylo, sigma2_space, dim=2, diffusion=1.0, mu=None,
                            dispersion=None, n_cells=1, mean_size=500.0, n_spatial_basis=8,
-                           spatial_lengthscale=0.5, intermixing=0.5, jitter=0.0,
+                           spatial_lengthscale=0.5, intermixing=0.5, jitter=0.0, growth="diffuse",
                            spatial_module=None, phylo_module=None, gene_names=None, seed=0):
     """Simulate spatial single-cell lineage data: BM coordinates + additive phylo/niche expression.
 
@@ -165,14 +182,19 @@ def simulate_spatial_panel(tree, sigma2_phylo, sigma2_space, dim=2, diffusion=1.
     sp_sp = np.broadcast_to(np.asarray(sigma2_space, dtype=float).ravel(), (p,))
     mu = np.zeros(p) if mu is None else np.asarray(mu, dtype=float).ravel()
 
-    # (1) spatial coordinates: a mix of Brownian motion down the tree (lineage-determined) and
-    #     independent scatter (clonal intermixing). intermixing=0 -> pure lineage (space==tree,
-    #     hard / non-identifiable); intermixing=1 -> position independent of lineage (separable).
-    coords_bm, leaves = _bm_field(tree, dim, np.full(dim, diffusion), rng)
-    coords_bm = (coords_bm - coords_bm.mean(0)) / (coords_bm.std(0) + 1e-9)
+    # (1) spatial coordinates: a lineage-determined base (``growth``) mixed with independent scatter
+    #     (clonal ``intermixing``). growth='diffuse' = Brownian motion down the tree; growth='clonal'
+    #     = Cassiopeia territorial layout (subclones as contiguous domains, so a clonal program is
+    #     spatially coherent). intermixing=0 -> pure lineage; intermixing=1 -> position independent.
+    leaves = tree.root.get_leaves()
+    if growth == "clonal":
+        coords_base = _clonal_coords(tree, dim, seed)
+    else:
+        coords_base, _ = _bm_field(tree, dim, np.full(dim, diffusion), rng)
+    coords_base = (coords_base - coords_base.mean(0)) / (coords_base.std(0) + 1e-9)
     coords_indep = rng.standard_normal((len(leaves), dim))
     rho = float(np.clip(intermixing, 0.0, 1.0))
-    coords_leaf = np.sqrt(1.0 - rho) * coords_bm + np.sqrt(rho) * coords_indep
+    coords_leaf = np.sqrt(1.0 - rho) * coords_base + np.sqrt(rho) * coords_indep
     coords_leaf = (coords_leaf - coords_leaf.mean(0)) / (coords_leaf.std(0) + 1e-9)
     n_leaves = len(leaves)
     names = [l.name for l in leaves]
