@@ -56,6 +56,7 @@ from .api import (
     detect_rate_shifts,
     covariate_rate_shifts,
     decompose_variance,
+    spatial_programs,
     evolutionary_correlation,
     factor_analysis,
 )
@@ -107,6 +108,7 @@ __all__ = [
     "detect_rate_shifts",
     "covariate_rate_shifts",
     "decompose_variance",
+    "spatial_programs",
     "evolutionary_correlation",
     "factor_analysis",
     # Covariate-associated (state-dependent) rate shifts.

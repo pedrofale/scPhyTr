@@ -263,6 +263,44 @@ def decompose_variance(adata, genes=None, spatial_key="spatial", dispersion=None
     return adata
 
 
+def spatial_programs(adata, genes=None, n_programs=5, spatial_key="spatial", dispersion=None,
+                     include_residual=False, n_neighbors=6):
+    """Deconfounded spatial gene programs: gene–gene niche structure after removing lineage.
+
+    Decomposes each gene (additive tree⊕space model), takes its **spatial posterior component**
+    ``s_g`` (the niche signal with the heritable/lineage part removed), and reads the gene-gene
+    correlation of those components -- genes that share a microenvironmental program correlate,
+    while clonal genes (whose variation is lineage-driven) do not. The "Hotspot modules with the
+    lineage component removed". Stores ``uns['niche_corr']`` (gene×gene), ``uns['niche_programs']``
+    (top eigen-loadings), ``uns['niche_components']`` (leaf×gene spatial fields) and the per-gene
+    ``var['v_phylo','v_space']``.
+    """
+    from ..inference.spatial_decomposition import decompose
+    from ..preprocessing import spatial_neighbors
+    tree, leaves, idx, sf = _ctx(adata)
+    if "spatial_graph" not in adata.uns:
+        spatial_neighbors(adata, spatial_key=spatial_key, n_neighbors=n_neighbors)
+    Qs = adata.uns["spatial_graph"]["precision"]
+    genes = list(adata.var_names) if genes is None else list(genes)
+    S = np.zeros((len(leaves), len(genes)))
+    vp, vs = {}, {}
+    for j, g in enumerate(genes):
+        y = _gene_counts(adata, g)
+        obs = SubclonalObservation(y, sf, idx, len(leaves), dispersion=dispersion)
+        d = decompose(tree, obs, Qs, include_residual=include_residual)
+        S[:, j] = d.posterior["s"]; vp[g], vs[g] = d.v_phylo, d.v_space
+    Kc = np.nan_to_num(np.corrcoef(S, rowvar=False))
+    w, V = np.linalg.eigh(Kc)
+    top = np.argsort(w)[::-1][:n_programs]
+    adata.uns["niche_corr"] = Kc
+    adata.uns["niche_corr_genes"] = list(genes)
+    adata.uns["niche_programs"] = V[:, top] * np.sqrt(np.clip(w[top], 0, None))
+    adata.uns["niche_components"] = S
+    adata.var["v_phylo"] = pd.Series(vp).reindex(adata.var_names)
+    adata.var["v_space"] = pd.Series(vs).reindex(adata.var_names)
+    return adata
+
+
 def evolutionary_correlation(adata, genes, dispersion=None, key="K"):
     """Deconfounded gene-gene evolutionary correlation K via the multivariate count model.
 

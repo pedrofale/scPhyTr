@@ -142,7 +142,7 @@ def _bm_field(tree, p, rates, rng, root_value=None):
 def simulate_spatial_panel(tree, sigma2_phylo, sigma2_space, dim=2, diffusion=1.0, mu=None,
                            dispersion=None, n_cells=1, mean_size=500.0, n_spatial_basis=8,
                            spatial_lengthscale=0.5, intermixing=0.5, jitter=0.0,
-                           gene_names=None, seed=0):
+                           spatial_module=None, phylo_module=None, gene_names=None, seed=0):
     """Simulate spatial single-cell lineage data: BM coordinates + additive phylo/niche expression.
 
     The spatial **coordinates** of each cell are a Brownian motion down the tree (so spatially
@@ -177,15 +177,28 @@ def simulate_spatial_panel(tree, sigma2_phylo, sigma2_space, dim=2, diffusion=1.
     n_leaves = len(leaves)
     names = [l.name for l in leaves]
 
-    # (2) phylogenetic expression component: independent BM per gene -> variance sigma2_phylo
-    U, _ = _bm_field(tree, p, np.maximum(sp_ph, 1e-9), rng)
+    # (2) phylogenetic expression component: BM down the tree -> variance sigma2_phylo. Genes
+    #     sharing a `phylo_module` id share one BM field (a co-heritable / clonal program).
+    if phylo_module is None:
+        U, _ = _bm_field(tree, p, np.maximum(sp_ph, 1e-9), rng)
+    else:
+        pm = np.asarray(phylo_module)
+        pfield = {m: _bm_field(tree, 1, 1.0, rng)[0][:, 0] for m in np.unique(pm)}
+        U = np.column_stack([pfield[pm[g]] for g in range(p)])
     U = U / (U.std(0) + 1e-9) * np.sqrt(sp_ph)
 
     # (3) spatial/niche component: a smooth random field over coordinates (random Fourier features)
-    Wf = rng.standard_normal((dim, n_spatial_basis)) / max(spatial_lengthscale, 1e-6)
-    bf = rng.uniform(0.0, 2 * np.pi, n_spatial_basis)
-    Phi = np.cos(coords_leaf @ Wf + bf)
-    S = Phi @ rng.standard_normal((n_spatial_basis, p))
+    def _rff_field():                                          # one smooth random field over coords
+        Wf = rng.standard_normal((dim, n_spatial_basis)) / max(spatial_lengthscale, 1e-6)
+        bf = rng.uniform(0.0, 2 * np.pi, n_spatial_basis)
+        return np.cos(coords_leaf @ Wf + bf) @ rng.standard_normal(n_spatial_basis)
+
+    if spatial_module is None:                                  # independent field per gene
+        S = np.column_stack([_rff_field() for _ in range(p)])
+    else:                                                       # genes sharing a module id share a field
+        sm = np.asarray(spatial_module)
+        field = {m: _rff_field() for m in np.unique(sm)}        # one distinct field per module
+        S = np.column_stack([field[sm[g]] for g in range(p)])
     S = S / (S.std(0) + 1e-9) * np.sqrt(sp_sp)
 
     Zleaf = mu + U + S                                          # latent log-expression at leaves
@@ -211,6 +224,8 @@ def simulate_spatial_panel(tree, sigma2_phylo, sigma2_space, dim=2, diffusion=1.
     A.var["true_v_phylo"] = sp_ph
     A.var["true_v_space"] = sp_sp
     A.var["true_frac_heritable"] = sp_ph / (sp_ph + sp_sp)
+    if spatial_module is not None:
+        A.var["true_spatial_module"] = np.asarray(spatial_module)
     if dispersion is not None:
         A.var["true_dispersion"] = np.broadcast_to(np.asarray(dispersion, float).ravel(), (p,))
     A.uns["true_latent"] = Zleaf
