@@ -141,7 +141,8 @@ def _bm_field(tree, p, rates, rng, root_value=None):
 
 def simulate_spatial_panel(tree, sigma2_phylo, sigma2_space, dim=2, diffusion=1.0, mu=None,
                            dispersion=None, n_cells=1, mean_size=500.0, n_spatial_basis=8,
-                           spatial_lengthscale=0.5, jitter=0.0, gene_names=None, seed=0):
+                           spatial_lengthscale=0.5, intermixing=0.5, jitter=0.0,
+                           gene_names=None, seed=0):
     """Simulate spatial single-cell lineage data: BM coordinates + additive phylo/niche expression.
 
     The spatial **coordinates** of each cell are a Brownian motion down the tree (so spatially
@@ -164,8 +165,14 @@ def simulate_spatial_panel(tree, sigma2_phylo, sigma2_space, dim=2, diffusion=1.
     sp_sp = np.broadcast_to(np.asarray(sigma2_space, dtype=float).ravel(), (p,))
     mu = np.zeros(p) if mu is None else np.asarray(mu, dtype=float).ravel()
 
-    # (1) spatial coordinates: Brownian motion down the tree, standardized
-    coords_leaf, leaves = _bm_field(tree, dim, np.full(dim, diffusion), rng)
+    # (1) spatial coordinates: a mix of Brownian motion down the tree (lineage-determined) and
+    #     independent scatter (clonal intermixing). intermixing=0 -> pure lineage (space==tree,
+    #     hard / non-identifiable); intermixing=1 -> position independent of lineage (separable).
+    coords_bm, leaves = _bm_field(tree, dim, np.full(dim, diffusion), rng)
+    coords_bm = (coords_bm - coords_bm.mean(0)) / (coords_bm.std(0) + 1e-9)
+    coords_indep = rng.standard_normal((len(leaves), dim))
+    rho = float(np.clip(intermixing, 0.0, 1.0))
+    coords_leaf = np.sqrt(1.0 - rho) * coords_bm + np.sqrt(rho) * coords_indep
     coords_leaf = (coords_leaf - coords_leaf.mean(0)) / (coords_leaf.std(0) + 1e-9)
     n_leaves = len(leaves)
     names = [l.name for l in leaves]
