@@ -227,6 +227,36 @@ def covariate_rate_shifts(adata, obs, genes=None, character=None, key="cov_rate"
     return results[character] if single else results
 
 
+def decompose_variance(adata, genes=None, spatial_key="spatial", dispersion=None,
+                       include_residual=False, n_neighbors=6):
+    """Partition each gene's expression variance into heritable (tree) vs niche (spatial) vs residual.
+
+    Fits the additive tree⊕space latent-Gaussian model with the subclonal count decoder
+    (:func:`scphytr.inference.spatial_decomposition.decompose`) and writes, per gene,
+    ``var['v_phylo','v_space','v_resid']`` and ``var['frac_heritable']`` = v_phylo/(v_phylo+v_space).
+    Unlike a tree-only rate, this does not misattribute spatial structure to fast evolution. Builds
+    the spatial GMRF from ``obsm[spatial_key]`` via :func:`pp.spatial_neighbors` if absent.
+    """
+    from ..inference.spatial_decomposition import decompose
+    from ..preprocessing import spatial_neighbors
+    tree, leaves, idx, sf = _ctx(adata)
+    if "spatial_graph" not in adata.uns:
+        spatial_neighbors(adata, spatial_key=spatial_key, n_neighbors=n_neighbors)
+    Qs = adata.uns["spatial_graph"]["precision"]
+    genes = list(adata.var_names) if genes is None else list(genes)
+    vp, vs, vr, fr = {}, {}, {}, {}
+    for g in genes:
+        y = _gene_counts(adata, g)
+        obs = SubclonalObservation(y, sf, idx, len(leaves), dispersion=dispersion)
+        d = decompose(tree, obs, Qs, include_residual=include_residual)
+        vp[g], vs[g], vr[g], fr[g] = d.v_phylo, d.v_space, d.v_resid, d.frac_heritable
+    adata.var["v_phylo"] = pd.Series(vp).reindex(adata.var_names)
+    adata.var["v_space"] = pd.Series(vs).reindex(adata.var_names)
+    adata.var["v_resid"] = pd.Series(vr).reindex(adata.var_names)
+    adata.var["frac_heritable"] = pd.Series(fr).reindex(adata.var_names)
+    return adata
+
+
 def evolutionary_correlation(adata, genes, dispersion=None, key="K"):
     """Deconfounded gene-gene evolutionary correlation K via the multivariate count model.
 
