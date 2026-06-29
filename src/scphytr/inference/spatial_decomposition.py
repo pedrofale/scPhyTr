@@ -123,6 +123,11 @@ def decompose(tree, obs, Q_space1, *, include_residual=True, restarts=1, seed=0,
     or :class:`GaussianLeafObservation`). ``Q_space1`` is the unit-scale spatial precision over
     leaves (``pp.spatial_neighbors`` -> ``uns['spatial_graph']['precision']``), in leaf order.
     Returns a :class:`DecompositionResult` (leaf-marginal variance components).
+
+    ``include_residual`` adds an iid leaf nugget. It is weakly identifiable against the spatial
+    field (both act only at the leaves), so on clean count data it can absorb genuine niche variance
+    and inflate ``frac_heritable``; callers that want the reliable heritable/niche split (e.g.
+    ``tl.decompose_variance``) leave it off.
     """
     Q1, leaf_free, nf, mean_depth, logdet_Q1 = tree_bm_precision(tree)
     Qs1 = np.asarray(Q_space1.todense() if hasattr(Q_space1, "todense") else Q_space1, dtype=float)

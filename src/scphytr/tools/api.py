@@ -236,6 +236,12 @@ def decompose_variance(adata, genes=None, spatial_key="spatial", dispersion=None
     ``var['v_phylo','v_space','v_resid']`` and ``var['frac_heritable']`` = v_phylo/(v_phylo+v_space).
     Unlike a tree-only rate, this does not misattribute spatial structure to fast evolution. Builds
     the spatial GMRF from ``obsm[spatial_key]`` via :func:`pp.spatial_neighbors` if absent.
+
+    ``include_residual`` is **off by default** on purpose: the iid residual is weakly identifiable
+    against the spatial field (both live at the leaves), so enabling it can siphon genuine niche
+    variance into the residual and flip a niche gene to ``frac_heritable``≈1. Only turn it on when
+    you specifically want to model cell-intrinsic latent variation beyond lineage and niche, and
+    treat the resulting split with care.
     """
     from ..inference.spatial_decomposition import decompose
     from ..preprocessing import spatial_neighbors
