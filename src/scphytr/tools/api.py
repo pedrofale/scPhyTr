@@ -274,6 +274,11 @@ def spatial_programs(adata, genes=None, n_programs=5, spatial_key="spatial", dis
     lineage component removed". Stores ``uns['niche_corr']`` (gene×gene), ``uns['niche_programs']``
     (top eigen-loadings), ``uns['niche_components']`` (leaf×gene spatial fields) and the per-gene
     ``var['v_phylo','v_space']``.
+
+    The same fit yields the **symmetric clonal side**: ``uns['clonal_corr']``,
+    ``uns['clonal_programs']`` and ``uns['clonal_components']`` are the gene-gene correlation,
+    eigen-loadings and leaf×gene fields of the **phylo** component (niche removed) -- shared-lineage
+    programs deconfounded from spatial niche, the mirror image of the niche outputs.
     """
     from ..inference.spatial_decomposition import decompose
     from ..preprocessing import spatial_neighbors
@@ -283,12 +288,14 @@ def spatial_programs(adata, genes=None, n_programs=5, spatial_key="spatial", dis
     Qs = adata.uns["spatial_graph"]["precision"]
     genes = list(adata.var_names) if genes is None else list(genes)
     S = np.zeros((len(leaves), len(genes)))
+    U = np.zeros((len(leaves), len(genes)))
     vp, vs = {}, {}
     for j, g in enumerate(genes):
         y = _gene_counts(adata, g)
         obs = SubclonalObservation(y, sf, idx, len(leaves), dispersion=dispersion)
         d = decompose(tree, obs, Qs, include_residual=include_residual)
-        S[:, j] = d.posterior["s"]; vp[g], vs[g] = d.v_phylo, d.v_space
+        S[:, j] = d.posterior["s"]; U[:, j] = d.posterior["u_leaf"]
+        vp[g], vs[g] = d.v_phylo, d.v_space
     Kc = np.nan_to_num(np.corrcoef(S, rowvar=False))
     w, V = np.linalg.eigh(Kc)
     top = np.argsort(w)[::-1][:n_programs]
@@ -296,6 +303,14 @@ def spatial_programs(adata, genes=None, n_programs=5, spatial_key="spatial", dis
     adata.uns["niche_corr_genes"] = list(genes)
     adata.uns["niche_programs"] = V[:, top] * np.sqrt(np.clip(w[top], 0, None))
     adata.uns["niche_components"] = S
+    # Symmetric clonal (lineage) side: gene-gene correlation of the *phylo* component (niche
+    # removed) -- the deconfounded analog of niche_corr for shared-lineage programs.
+    Kp = np.nan_to_num(np.corrcoef(U, rowvar=False))
+    wp, Vp = np.linalg.eigh(Kp)
+    topp = np.argsort(wp)[::-1][:n_programs]
+    adata.uns["clonal_corr"] = Kp
+    adata.uns["clonal_programs"] = Vp[:, topp] * np.sqrt(np.clip(wp[topp], 0, None))
+    adata.uns["clonal_components"] = U
     adata.var["v_phylo"] = pd.Series(vp).reindex(adata.var_names)
     adata.var["v_space"] = pd.Series(vs).reindex(adata.var_names)
     return adata
