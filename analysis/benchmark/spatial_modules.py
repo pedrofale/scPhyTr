@@ -55,14 +55,14 @@ def _pairs(groups):
     return iu, same, coher
 
 
-def compute(n=70, intermixing=0.1, spatial_lengthscale=1.0, dispersion=30.0, seed=0):
+def compute(n=70, intermixing=0.0, spatial_lengthscale=1.0, dispersion=30.0, growth="clonal", seed=0):
     tree = _tree(n, seed)
     v_ph, v_sp, spatial_module, phylo_module, groups, names = _panel()
     A = ph.simulate_spatial_panel(tree, v_ph, v_sp, dim=2, diffusion=1.0,
                                   dispersion=[dispersion] * len(names), n_cells=1, mean_size=500,
                                   spatial_lengthscale=spatial_lengthscale, intermixing=intermixing,
-                                  spatial_module=spatial_module, phylo_module=phylo_module,
-                                  gene_names=names, seed=seed)
+                                  growth=growth, spatial_module=spatial_module,
+                                  phylo_module=phylo_module, gene_names=names, seed=seed)
     ph.pp.setup_anndata(A, tree); ph.pp.spatial_neighbors(A, n_neighbors=8)
     ph.tl.spatial_programs(A, dispersion=dispersion)
     K_sc = np.abs(A.uns["niche_corr"])
@@ -171,8 +171,9 @@ def main():
     # rebuild one example niche_corr for the heatmap
     tree = _tree(70, 0); v_ph, v_sp, sm, pm, groups, names = _panel()
     A = ph.simulate_spatial_panel(tree, v_ph, v_sp, dim=2, diffusion=1.0, dispersion=[30.] * len(names),
-                                  n_cells=1, mean_size=500, spatial_lengthscale=1.0, intermixing=0.1,
-                                  spatial_module=sm, phylo_module=pm, gene_names=names, seed=0)
+                                  n_cells=1, mean_size=500, spatial_lengthscale=1.0, intermixing=0.0,
+                                  growth="clonal", spatial_module=sm, phylo_module=pm,
+                                  gene_names=names, seed=0)
     ph.pp.setup_anndata(A, tree); ph.tl.spatial_programs(A, dispersion=30.0)
     figure(df, example=(A.uns["niche_corr"], names))
 
