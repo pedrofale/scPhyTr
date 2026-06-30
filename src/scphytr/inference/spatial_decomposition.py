@@ -19,9 +19,35 @@ leaves); v1 factorizes it densely (small trees), and the structure supports a sp
 scale-up. The tree block reuses the BM precision of :class:`scphytr.inference.tree_laplace._TreeModel`.
 """
 import numpy as np
+import scipy.sparse as sp
 from scipy.optimize import minimize
+from scipy.sparse.linalg import splu
 
 from .tree_laplace import _TreeModel
+
+
+def _splu_logdet(Acsc):
+    """log|det A| for a sparse SPD matrix via the SuperLU factorization (sum of log|diag(U)|)."""
+    lu = splu(sp.csc_matrix(Acsc))
+    return float(np.sum(np.log(np.abs(lu.U.diagonal())))), lu
+
+
+def _mean_diag_inv(Qcsc, n_probe=40, seed=0):
+    """Mean diagonal of the inverse of a sparse precision (mean prior marginal variance).
+
+    Exact dense inverse for small graphs; a Hutchinson estimator (Rademacher probes against the
+    sparse factorization) for large ones, so the proxy scale stays cheap on big trees.
+    """
+    n = Qcsc.shape[0]
+    if n <= 1200:
+        return float(np.mean(np.diag(np.linalg.inv(Qcsc.toarray()))))
+    lu = splu(sp.csc_matrix(Qcsc))
+    rng = np.random.default_rng(seed)
+    acc = 0.0
+    for _ in range(n_probe):
+        z = rng.integers(0, 2, size=n).astype(float) * 2.0 - 1.0
+        acc += float(z @ lu.solve(z))
+    return acc / (n_probe * n)
 
 
 class GaussianLeafObservation:
@@ -84,20 +110,23 @@ def tree_bm_precision(tree):
     free = [i for i in range(M.N) if M.free[i]]
     pos = {i: k for k, i in enumerate(free)}
     nf = len(free)
-    Q1 = np.zeros((nf, nf))
+    rows, cols, vals = [], [], []
+    def add(r, c, v):
+        rows.append(r); cols.append(c); vals.append(v)
     for i in range(M.N):
         if M.is_root[i]:
             if M.free[i]:
-                Q1[pos[i], pos[i]] += M.invV[i]
+                add(pos[i], pos[i], M.invV[i])
         else:
             pa, iv, ph = M.parent[i], M.invV[i], M.phi[i]
             if M.free[i]:
-                Q1[pos[i], pos[i]] += iv
+                add(pos[i], pos[i], iv)
             if M.free[pa]:
-                Q1[pos[pa], pos[pa]] += ph * ph * iv
+                add(pos[pa], pos[pa], ph * ph * iv)
             if M.free[i] and M.free[pa]:
-                Q1[pos[i], pos[pa]] -= ph * iv
-                Q1[pos[pa], pos[i]] -= ph * iv
+                add(pos[i], pos[pa], -ph * iv)
+                add(pos[pa], pos[i], -ph * iv)
+    Q1 = sp.coo_matrix((vals, (rows, cols)), shape=(nf, nf)).tocsc()
     leaf_free = np.array([pos[M.leaf_node_idx[L]] for L in range(len(M.leaf_node_idx))], dtype=int)
     depths = []
     for nd in tree.root.get_leaves():
@@ -105,7 +134,7 @@ def tree_bm_precision(tree):
         while x is not tree.root:
             d += x.dist; x = x.up
         depths.append(d)
-    sign, logdet = np.linalg.slogdet(Q1)
+    logdet, _ = _splu_logdet(Q1)
     return Q1, leaf_free, nf, float(np.mean(depths)), float(logdet)
 
 
@@ -130,30 +159,30 @@ def decompose(tree, obs, Q_space1, *, include_residual=True, restarts=1, seed=0,
     ``tl.decompose_variance``) leave it off.
     """
     Q1, leaf_free, nf, mean_depth, logdet_Q1 = tree_bm_precision(tree)
-    Qs1 = np.asarray(Q_space1.todense() if hasattr(Q_space1, "todense") else Q_space1, dtype=float)
+    Qs1 = sp.csc_matrix(Q_space1)
     nL = Qs1.shape[0]
     if leaf_free.shape[0] != nL:
         raise ValueError(f"spatial precision is {nL}x{nL} but the tree has {leaf_free.shape[0]} leaves")
-    sign_s, logdet_Qs1 = np.linalg.slogdet(Qs1)
-    mean_space_var = float(np.mean(np.diag(np.linalg.inv(Qs1))))   # mean prior marginal var of s
+    logdet_Qs1, _ = _splu_logdet(Qs1)
+    mean_space_var = _mean_diag_inv(Qs1)                           # mean prior marginal var of s
 
     nblk = 2 + int(include_residual)
     dim = nf + nL * (nblk - 1)
-    # selection A: eta_j = u[leaf_free[j]] + s_j (+ e_j)
-    A = np.zeros((nL, dim))
-    A[np.arange(nL), leaf_free] = 1.0
-    A[np.arange(nL), nf + np.arange(nL)] = 1.0
+    # selection A: eta_j = u[leaf_free[j]] + s_j (+ e_j)  -- sparse, one row per leaf
+    ridx = np.arange(nL)
+    a_rows = [ridx, ridx]
+    a_cols = [leaf_free, nf + ridx]
     if include_residual:
-        A[np.arange(nL), nf + nL + np.arange(nL)] = 1.0
+        a_rows.append(ridx); a_cols.append(nf + nL + ridx)
+    A = sp.csr_matrix((np.ones(nL * nblk), (np.concatenate(a_rows), np.concatenate(a_cols))),
+                      shape=(nL, dim))
+    AT = A.T.tocsr()
 
     def prior_precision(s2p, s2s, s2r):
-        Q = np.zeros((dim, dim))
-        Q[:nf, :nf] = Q1 / s2p
-        Q[nf:nf + nL, nf:nf + nL] = Qs1 / s2s
+        blocks = [Q1 * (1.0 / s2p), Qs1 * (1.0 / s2s)]
         if include_residual:
-            r = slice(nf + nL, nf + 2 * nL)
-            Q[r, r] = np.eye(nL) / s2r
-        return Q
+            blocks.append(sp.identity(nL, format="csc") * (1.0 / s2r))
+        return sp.block_diag(blocks, format="csc")
 
     def logdet_prior(s2p, s2s, s2r):
         ld = (logdet_Q1 - nf * np.log(s2p)) + (logdet_Qs1 - nL * np.log(s2s))
@@ -165,23 +194,30 @@ def decompose(tree, obs, Q_space1, *, include_residual=True, restarts=1, seed=0,
     offset = float(np.mean(leaf_init))                # global log-rate; latent is the deviation
     leaf_init0 = leaf_init - offset
 
+    warm = {"x": None}                                # mode of the previous marginal eval
+
     def fit_mode(Q):
-        x = np.zeros(dim)
-        x[leaf_free] = leaf_init0                     # warm-start u at the (centered) data
+        if warm["x"] is not None:
+            x = warm["x"].copy()                      # consecutive evals sit at nearby scales
+        else:
+            x = np.zeros(dim)
+            x[leaf_free] = leaf_init0                 # cold start: u at the (centered) data
         def psi(xx):
-            eta = offset + A @ xx
-            return -obs.loglik(eta) + 0.5 * xx @ (Q @ xx)
+            eta = offset + A.dot(xx)
+            return -obs.loglik(eta) + 0.5 * float(xx @ (Q.dot(xx)))
         cur = psi(x)
         ok = False
+        lu = None
         for _ in range(max_newton):
-            eta = offset + A @ x
+            eta = offset + A.dot(x)
             W = obs.neg_hess_diag(eta)
             g = obs.grad(eta)
-            grad = Q @ x - A.T @ g
-            H = Q + (A.T * W) @ A
+            grad = Q.dot(x) - AT.dot(g)
+            H = (Q + AT.dot(sp.diags(W)).dot(A)).tocsc()
             try:
-                step = np.linalg.solve(H, -grad)
-            except np.linalg.LinAlgError:
+                lu = splu(H)
+                step = lu.solve(-grad)
+            except RuntimeError:
                 break
             t, new = 1.0, cur
             for _ in range(40):
@@ -194,19 +230,19 @@ def decompose(tree, obs, Q_space1, *, include_residual=True, restarts=1, seed=0,
             x, cur = xn, new
             if ok:
                 break
-        return x, H, ok
+        warm["x"] = x
+        return x, lu, ok
 
     def neg_marginal(logp):
         s2p, s2s = np.exp(logp[0]), np.exp(logp[1])
         s2r = np.exp(logp[2]) if include_residual else 1.0
         Q = prior_precision(s2p, s2s, s2r)
-        x, H, _ = fit_mode(Q)
-        eta = offset + A @ x
-        try:
-            ld_H = _logdet_chol(H)
-        except np.linalg.LinAlgError:
+        x, lu, _ = fit_mode(Q)
+        if lu is None:
             return 1e18
-        marg = obs.loglik(eta) - 0.5 * x @ (Q @ x) + 0.5 * logdet_prior(s2p, s2s, s2r) - 0.5 * ld_H
+        eta = offset + A.dot(x)
+        ld_H = float(np.sum(np.log(np.abs(lu.U.diagonal()))))    # log|det H| at the mode
+        marg = obs.loglik(eta) - 0.5 * float(x @ Q.dot(x)) + 0.5 * logdet_prior(s2p, s2s, s2r) - 0.5 * ld_H
         return -marg if np.isfinite(marg) else 1e18
 
     rng = np.random.default_rng(seed)
@@ -219,7 +255,7 @@ def decompose(tree, obs, Q_space1, *, include_residual=True, restarts=1, seed=0,
     best = None
     for p0 in inits:
         res = minimize(neg_marginal, p0, method="Nelder-Mead",
-                       options={"xatol": 1e-4, "fatol": 1e-5, "maxiter": 2000})
+                       options={"xatol": 1e-3, "fatol": 1e-4, "maxiter": 400})
         if best is None or res.fun < best.fun:
             best = res
 
