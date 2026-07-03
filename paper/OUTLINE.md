@@ -69,8 +69,9 @@ scalable tool.
   attenuate and plateau below truth even at high depth (`depth_coevolution.py`); (c) calibration /
   recovery vs planted truth (from spatial_decomposition.py). This is the demonstrated NON-SPATIAL
   advantage — the count likelihood, on the same sparsity axis as the spatial story. *Status: DONE —
-  4 committed benchmarks: heritability (b250607), co-evolution (1b10a12), plasticity recovery
-  (b5d5f49, fair version), weak-selection detection (3f22ec5). Assemble.*
+  3 robust committed benchmarks: heritability (b250607), co-evolution (1b10a12), plasticity recovery
+  (b5d5f49, fair version). Assemble. (A 4th, weak-selection detection, was built then DROPPED — not
+  reproducible run-to-run; selection detection has genuinely little count-model advantage.)*
 - **Fig S/2d — Scalability (honest).** Gene axis WIN: low-rank Poisson factor model (K=WWᵀ) fits 800
   genes in ~3s vs the full pxp covariance's ~32h-extrapolated (415x at 50 genes; `runtime_scaling.py`,
   commit 1fd47a7). Plus vs-MCMC (RevBayes ~40x). HONEST CAVEAT (do NOT claim): scPhyTr is NOT faster
