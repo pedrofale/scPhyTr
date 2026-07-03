@@ -281,7 +281,7 @@ _FITTERS = {"BM": fit_bm, "OU": fit_ou}
 # the same parameter counts.
 # ---------------------------------------------------------------------------
 
-def fit_bm_counts(tree, obs, restarts=2, seed=0):
+def fit_bm_counts(tree, obs, restarts=1, seed=0):
     """Fit BM to a latent trait observed through a non-conjugate likelihood."""
     from ..inference.tree_laplace import _TreeModel
     n = len(obs.mode_init())
@@ -303,8 +303,8 @@ def fit_bm_counts(tree, obs, restarts=2, seed=0):
               for _ in range(restarts)]
     best = None
     for p0 in inits:
-        res = minimize(nll, p0, method="Nelder-Mead",
-                       options={"xatol": 1e-5, "fatol": 1e-6, "maxiter": 2000})
+        res = minimize(nll, p0, method="L-BFGS-B",
+                       options={"eps": 1e-4, "ftol": 1e-8, "gtol": 1e-5, "maxiter": 200})
         if best is None or res.fun < best.fun:
             best = res
     mu, log_s2 = best.x
@@ -336,8 +336,8 @@ def fit_ou_counts(tree, obs, alpha_inits=(0.1, 1.0, 5.0), seed=0):
     for alpha0 in alpha_inits:
         a0 = min(alpha0, alpha_max)
         p0 = np.array([np.log(a0), mean0, np.log(2.0 * a0 * var0)])
-        res = minimize(nll, p0, method="Nelder-Mead",
-                       options={"xatol": 1e-5, "fatol": 1e-6, "maxiter": 3000})
+        res = minimize(nll, p0, method="L-BFGS-B",
+                       options={"eps": 1e-4, "ftol": 1e-8, "gtol": 1e-5, "maxiter": 300})
         if best is None or res.fun < best.fun:
             best = res
     alpha = float(np.clip(np.exp(best.x[0]), 1e-4, alpha_max))
