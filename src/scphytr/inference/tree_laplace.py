@@ -44,101 +44,96 @@ class _TreeModel:
     _ZERO = 1e-12
 
     def __init__(self, tree, alpha, theta, sigma2, regimes=None, root_value=None):
-        thetas = np.atleast_1d(np.asarray(theta, dtype=float))
-
-        def theta_of(node):
-            return thetas[0] if regimes is None else thetas[regimes[node]]
-
+        # --- structure (topology + branch lengths); independent of the rate params, built once ---
         root = tree.root
         self.post = list(root.traverse("postorder"))   # children before parents
         self.pre = list(root.traverse("preorder"))
         self.index = {nd: i for i, nd in enumerate(self.post)}
         N = len(self.post)
         self.N = N
-
-        self.parent = np.full(N, -1, dtype=int)
-        self.phi = np.zeros(N)        # contraction on the edge above the node
-        self.invV = np.zeros(N)       # 1 / edge variance (0 if the node is fixed)
-        self.c = np.zeros(N)          # (1 - phi) theta on the edge
+        self.parent = np.full(N, -1, dtype=int)         # post-order index of the parent (-1 at root)
+        self.dist = np.zeros(N)                         # branch length above each node
         self.is_root = np.zeros(N, dtype=bool)
-        self.free = np.ones(N, dtype=bool)
-        self.mu0 = np.zeros(N)        # prior mean of a fixed node (root only here)
-
-        a = theta_of(root) if root_value is None else float(np.asarray(root_value).ravel()[0])
-
         for nd in self.post:
             i = self.index[nd]
-            phi, v = _ou_branch(alpha, nd.dist)
-            V = v * sigma2
+            self.dist[i] = nd.dist
             if nd is root:
                 self.is_root[i] = True
-                self.mu0[i] = phi * a + (1.0 - phi) * theta_of(nd)
-                if V <= self._ZERO:        # zero-length root branch -> fixed root
-                    self.free[i] = False
-                else:
-                    self.invV[i] = 1.0 / V
             else:
-                if V <= self._ZERO:
-                    raise ValueError("Zero-length non-root branch is not supported; "
-                                     "collapse or perturb such branches before fitting.")
                 self.parent[i] = self.index[nd.up]
-                self.phi[i] = phi
-                self.invV[i] = 1.0 / V
-                self.c[i] = (1.0 - phi) * theta_of(nd)
-
-        # Elimination couples a node only to a *free* parent.
-        self.solve_parent = np.full(N, -1, dtype=int)
-        self.off = np.zeros(N)
-        for i in range(N):
-            pa = self.parent[i]
-            if pa >= 0 and self.free[pa]:
-                self.solve_parent[i] = pa
-                self.off[i] = -self.phi[i] * self.invV[i]
-
-        # Constant part of the Hessian diagonal (prior precision).
-        self.diag_base = np.zeros(N)
-        for i in range(N):
-            if self.free[i]:
-                self.diag_base[i] += self.invV[i]
-            pa = self.parent[i]
-            if pa >= 0 and self.free[pa]:
-                self.diag_base[pa] += self.phi[i] ** 2 * self.invV[i]
-
-        # log|Q| = sum log(invV) over free nodes (edge variances of fixed nodes drop out).
-        self.log_det_Q = float(np.sum(np.log(self.invV[self.free])))
-
-        # Map observation/leaf order -> node index.
+        self._nonroot = np.where(~self.is_root)[0]
+        self._nr_parent = self.parent[self._nonroot]
+        # regime index per node (for per-regime theta); None => single optimum
+        if regimes is None:
+            self._regime_idx = None
+        else:
+            self._regime_idx = np.array([regimes[nd] for nd in self.post], dtype=int)
+        # observation/leaf order -> node index
         node_by_name = {nd.name: self.index[nd] for nd in self.post if nd.is_leaf()}
         self.leaf_node_idx = np.array([node_by_name[name] for name in tree.phylotree.get_leaf_names()],
                                       dtype=int)
-        self.fixed_value = {i: self.mu0[i] for i in range(N) if not self.free[i]}
+        self.set_params(alpha, theta, sigma2, regimes=regimes, root_value=root_value)
+
+    def set_params(self, alpha, theta, sigma2, regimes=None, root_value=None):
+        """Recompute only the rate-dependent edge quantities on the cached structure (vectorized)."""
+        N = self.N
+        thetas = np.atleast_1d(np.asarray(theta, dtype=float))
+        theta_vec = (np.full(N, thetas[0]) if self._regime_idx is None
+                     else thetas[self._regime_idx])
+        # per-edge contraction phi and variance factor v (BM: phi=1, v=dist)
+        if alpha is None or alpha <= 0:
+            phi = np.ones(N); v = self.dist.copy()
+        else:
+            phi = np.exp(-alpha * self.dist)
+            v = -np.expm1(-2.0 * alpha * self.dist) / (2.0 * alpha)
+        V = v * sigma2
+        self.phi = phi
+        self.c = (1.0 - phi) * theta_vec              # 0 for BM
+        self.free = V > self._ZERO
+        nonroot = self._nonroot
+        if np.any(V[nonroot] <= self._ZERO):
+            raise ValueError("Zero-length non-root branch is not supported; "
+                             "collapse or perturb such branches before fitting.")
+        self.invV = np.where(self.free, 1.0 / np.where(V > 0, V, 1.0), 0.0)
+        # prior mean of the root (the only possibly-fixed node)
+        a = float(theta_vec[self.is_root][0]) if root_value is None \
+            else float(np.asarray(root_value).ravel()[0])
+        self.mu0 = np.zeros(N)
+        self.mu0[self.is_root] = phi[self.is_root] * a + (1.0 - phi[self.is_root]) * theta_vec[self.is_root]
+        # elimination couples a node only to a *free* parent
+        self.solve_parent = np.full(N, -1, dtype=int)
+        self.off = np.zeros(N)
+        parent_free = np.zeros(N, dtype=bool)
+        parent_free[nonroot] = self.free[self._nr_parent]
+        couple = nonroot[parent_free[nonroot]]
+        self.solve_parent[couple] = self.parent[couple]
+        self.off[couple] = -self.phi[couple] * self.invV[couple]
+        # constant part of the Hessian diagonal (prior precision)
+        self.diag_base = np.where(self.free, self.invV, 0.0).copy()
+        np.add.at(self.diag_base, self.parent[couple], self.phi[couple] ** 2 * self.invV[couple])
+        self.log_det_Q = float(np.sum(np.log(self.invV[self.free])))
+        self.fixed_value = {i: self.mu0[i] for i in np.where(~self.free)[0]}
 
     def prior_grad(self, z):
         """Gradient of the prior negative log-density wrt all free node latents."""
         g = np.zeros(self.N)
-        for i in range(self.N):
-            if self.is_root[i]:
-                if self.free[i]:
-                    g[i] += (z[i] - self.mu0[i]) * self.invV[i]
-            else:
-                pa = self.parent[i]
-                r = (z[i] - self.phi[i] * z[pa] - self.c[i]) * self.invV[i]
-                g[i] += r
-                g[pa] += -self.phi[i] * r
+        rt = self.is_root & self.free
+        g[rt] += (z[rt] - self.mu0[rt]) * self.invV[rt]
+        nr = self._nonroot; pa = self._nr_parent
+        r = (z[nr] - self.phi[nr] * z[pa] - self.c[nr]) * self.invV[nr]
+        g[nr] += r
+        np.add.at(g, pa, -self.phi[nr] * r)
         g[~self.free] = 0.0
         return g
 
     def prior_quad(self, z):
         """(z - m)^T Q (z - m): sum of per-edge prior quadratics."""
-        total = 0.0
-        for i in range(self.N):
-            if self.is_root[i]:
-                if self.free[i]:
-                    total += (z[i] - self.mu0[i]) ** 2 * self.invV[i]
-            else:
-                pa = self.parent[i]
-                total += (z[i] - self.phi[i] * z[pa] - self.c[i]) ** 2 * self.invV[i]
-        return total
+        rt = self.is_root & self.free
+        total = np.sum((z[rt] - self.mu0[rt]) ** 2 * self.invV[rt])
+        nr = self._nonroot; pa = self._nr_parent
+        resid = z[nr] - self.phi[nr] * z[pa] - self.c[nr]
+        total += np.sum(resid ** 2 * self.invV[nr])
+        return float(total)
 
     def _eliminate(self, diag, rhs=None):
         """Postorder Gaussian elimination over free nodes; returns (d, rr, logdet)."""
@@ -178,15 +173,23 @@ class _TreeModel:
 
 
 def latent_tree_laplace_marginal(tree, obs, alpha, theta, sigma2, regimes=None,
-                                 root_value=None, max_iter=100, tol=1e-8, f_clip=40.0):
+                                 root_value=None, max_iter=100, tol=1e-8, f_clip=40.0,
+                                 model=None):
     """O(n) Laplace approximation to log p(y | hyperparameters) for a latent tree.
 
     Parameters mirror the OU model: scalar ``alpha`` (alpha<=0 => BM), optimum(s)
     ``theta`` ((p=1) scalar or per-regime array), diffusion variance ``sigma2``,
     optional ``regimes`` painting, and fixed ancestral ``root_value``.
     ``obs`` is the observation model (see module docstring).
+
+    ``model`` optionally reuses a prebuilt :class:`_TreeModel` (the tree structure is fixed across
+    an optimization; only the rate params change), avoiding a full rebuild on every evaluation.
     """
-    M = _TreeModel(tree, alpha, theta, sigma2, regimes=regimes, root_value=root_value)
+    if model is None:
+        M = _TreeModel(tree, alpha, theta, sigma2, regimes=regimes, root_value=root_value)
+    else:
+        M = model
+        M.set_params(alpha, theta, sigma2, regimes=regimes, root_value=root_value)
     leaf_idx = M.leaf_node_idx
 
     def psi(z):

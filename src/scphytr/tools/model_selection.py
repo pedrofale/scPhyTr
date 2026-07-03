@@ -283,13 +283,15 @@ _FITTERS = {"BM": fit_bm, "OU": fit_ou}
 
 def fit_bm_counts(tree, obs, restarts=2, seed=0):
     """Fit BM to a latent trait observed through a non-conjugate likelihood."""
+    from ..inference.tree_laplace import _TreeModel
     n = len(obs.mode_init())
     ydata = obs.mode_init()
+    M = _TreeModel(tree, 0.0, 0.0, 1.0, root_value=0.0)   # structure cached; reused every eval
 
     def nll(p):
         mu, log_s2 = p
         try:
-            ll = latent_tree_laplace_marginal(tree, obs, 0.0, mu, np.exp(log_s2), root_value=mu)
+            ll = latent_tree_laplace_marginal(tree, obs, 0.0, mu, np.exp(log_s2), root_value=mu, model=M)
         except (np.linalg.LinAlgError, ValueError):
             return 1e18                       # degenerate (e.g. sigma2 -> 0); prune
         return -ll if np.isfinite(ll) else 1e18
@@ -312,16 +314,18 @@ def fit_bm_counts(tree, obs, restarts=2, seed=0):
 
 def fit_ou_counts(tree, obs, alpha_inits=(0.1, 1.0, 5.0), seed=0):
     """Fit single-optimum OU to a latent trait observed non-conjugately."""
+    from ..inference.tree_laplace import _TreeModel
     n = len(obs.mode_init())
     alpha_max = _ou_alpha_max(tree)
     ydata = obs.mode_init()
+    M = _TreeModel(tree, 0.1, 0.0, 1.0, root_value=0.0)   # structure cached; reused every eval
 
     def nll(p):
         alpha = float(np.clip(np.exp(p[0]), 1e-4, alpha_max))
         theta, log_s2 = p[1], p[2]
         try:
             ll = latent_tree_laplace_marginal(tree, obs, alpha, theta, np.exp(log_s2),
-                                              root_value=theta)
+                                              root_value=theta, model=M)
         except (np.linalg.LinAlgError, ValueError):
             return 1e18
         return -ll if np.isfinite(ll) else 1e18
