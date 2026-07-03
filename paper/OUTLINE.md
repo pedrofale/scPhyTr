@@ -62,9 +62,20 @@ scalable tool.
 - **Fig 1 — Concept & model.** (a) the confound cartoon (local growth ⇒ lineage≈space);
   (b) the generative model schematic z = u(BM tree) + s(spatial GMRF) + e, NB count decoder;
   (c) the decomposition output (a gene → heritable/niche/residual). *Status: BUILD (schematic).*
-- **Fig 2 — It works & is calibrated (simulations).** recovery of frac_heritable vs planted truth;
-  calibration; identifiability vs clonal intermixing. *Status: HAVE data (benchmark
-  spatial_decomposition.py); assemble.*
+- **Fig 2 — Why a count model: it resists the attenuation that cripples Gaussian/noiseless-trait
+  PCM at single-cell depth.** (a) heritability vs sequencing depth: scPhyTr flat near truth, Pagel's
+  λ / Gaussian-on-log attenuate to <½ the true value at MERFISH depth (`depth_heritability.py`);
+  (b) gene-gene **co-evolution** vs depth: scPhyTr recovers true ρ, Felsenstein contrasts / naive
+  attenuate and plateau below truth even at high depth (`depth_coevolution.py`); (c) calibration /
+  recovery vs planted truth (from spatial_decomposition.py). This is the demonstrated NON-SPATIAL
+  advantage — the count likelihood, on the same sparsity axis as the spatial story. *Status: DONE —
+  4 committed benchmarks: heritability (b250607), co-evolution (1b10a12), plasticity recovery
+  (b5d5f49, fair version), weak-selection detection (3f22ec5). Assemble.*
+- **Fig S/2d — Scalability (honest).** Gene axis WIN: low-rank Poisson factor model (K=WWᵀ) fits 800
+  genes in ~3s vs the full pxp covariance's ~32h-extrapolated (415x at 50 genes; `runtime_scaling.py`,
+  commit 1fd47a7). Plus vs-MCMC (RevBayes ~40x). HONEST CAVEAT (do NOT claim): scPhyTr is NOT faster
+  than dense ML PCM on the CELL axis until ~10^4 cells (large optimizer constant); measured 42s vs
+  2.6s at 3500 cells. So frame runtime as gene-axis + vs-MCMC only.
 - **Fig 3 — Deconfounding beats the field's tools.** (a) per-gene heritability: scPhyTr 0.99 vs
   Moran's-I 0.69 vs Hotspot 0.79 + smoothness sweep; (b) gene-gene clonal modules: scPhyTr 0.98 vs
   Hotspot-tree 0.76 (benchmark 3); (c) mechanism panel (tree axis low-SNR: BM Moran's-I ~0.2 vs
