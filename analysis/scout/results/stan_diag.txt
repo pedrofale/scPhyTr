@@ -1,0 +1,30 @@
+
+=== adapt_delta=0.80 (default), JITTERED inits  [375s] ===
+P=(BM1 0.0000, OU1 0.0000, OUX 1.0000)  divergences 16/2000
+  max Rhat OVERALL        1.0129
+  max Rhat WINNING (oux)  1.0100
+  max Rhat UNUSED (bm/ou1)1.0095
+  min ESS_bulk WINNING    247
+  min ESS_bulk UNUSED     827
+  worst 6 by Rhat:
+     theta_spread     Rhat 1.0129  ESS     348
+     theta_oux[2]     Rhat 1.0100  ESS     300
+     theta_ou1        Rhat 1.0095  ESS     827
+     hl_oux           Rhat 1.0093  ESS     294
+     alpha_oux        Rhat 1.0093  ESS     294
+     sigma_oux        Rhat 1.0080  ESS     247
+
+=== adapt_delta=0.99, JITTERED inits  [912s] ===
+P=(BM1 0.0000, OU1 0.0000, OUX 1.0000)  divergences 0/2000
+  max Rhat OVERALL        1.0183
+  max Rhat WINNING (oux)  1.0121
+  max Rhat UNUSED (bm/ou1)1.0063
+  min ESS_bulk WINNING    524
+  min ESS_bulk UNUSED     894
+  worst 6 by Rhat:
+     tau[3]           Rhat 1.0183  ESS     514
+     sigma_oux        Rhat 1.0121  ESS     558
+     theta_oux[2]     Rhat 1.0095  ESS     531
+     alpha_oux        Rhat 1.0082  ESS     557
+     hl_oux           Rhat 1.0082  ESS     557
+     theta_ou1        Rhat 1.0063  ESS    1666
