@@ -30,6 +30,9 @@ ph.tl.estimate_rate(adata, genes=panel)                  # per-gene BM rate σ²
 ph.tl.heritability(adata, genes=panel)                   # Pagel's λ            -> adata.var['lambda','lambda_p']
 ph.tl.plasticity(adata, genes=panel)                     # heritable vs within-clone plastic variance (needs replicates)
 ph.tl.detect_adaptive(adata, genes=panel)                # BM vs OU vs OU2 (adaptive) per gene
+ph.tl.detect_modes(adata, genes=panel)                   # hierarchical Bayesian: WHICH BRANCH had an
+                                                         #   adaptive event + which genes responded
+                                                         #   -> uns['modes'] (p_z, p_gamma, clades)
 ph.tl.detect_rate_shifts(adata, character="Mki67")       # de-novo clade rate shifts -> adata.uns['rate_shifts']
 ph.tl.evolutionary_correlation(adata, genes=panel)       # deconfounded K       -> adata.uns['K','K_corr']
 ph.tl.factor_analysis(adata, k=5, genes=panel)           # phylogenetic factor analysis -> adata.uns['pfa']
@@ -57,6 +60,12 @@ Don't have data yet? Simulate it: `ph.simulate_panel(tree, K, ...)` (correlated 
 `ph.simulate_spatial_panel(tree, sigma2_phylo, sigma2_space, ...)` (tree⊕space latent field + NB counts,
 diffuse or Cassiopeia clonal-territory growth). See `notebooks/scphytr_tutorial.ipynb` (incl. the spatial
 section) and `notebooks/scphytr_roundtrip.ipynb`.
+
+**Hierarchical Bayesian mode detection.** `tl.detect_modes` is the one read-out that does not fit genes
+independently. Per-gene model selection has a hard information floor (SCOUT report 0.55 three-way accuracy
+at 32 leaves) and cannot say *where* an event happened. `detect_modes` puts latent adaptive events on
+branches, shared across genes, with a sparse per-gene indicator for which genes respond — so many genes
+each carrying weak evidence localise the same event. See `docs/06_mode_detection.md`.
 
 **Status.** Implemented and validated: the above `pp` / `tl` / `pl` calls and the simulators, backed by the
 linear-time exact-marginal `Laplace` inference (sparse, warm-started; scales to 10³–10⁴-cell trees). The

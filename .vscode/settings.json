@@ -1,0 +1,22 @@
+{
+  // Use tectonic (single-binary engine) instead of LaTeX Workshop's default latexmk.
+  "latex-workshop.latex.tools": [
+    {
+      "name": "tectonic",
+      "command": "tectonic",
+      "args": ["--synctex", "--keep-logs", "%DOC%.tex"]
+    }
+  ],
+  "latex-workshop.latex.recipes": [
+    { "name": "tectonic", "tools": ["tectonic"] }
+  ],
+  "latex-workshop.latex.recipe.default": "first",
+
+  // Rebuild the PDF on every save; open it in a side tab with SyncTeX.
+  "latex-workshop.latex.autoBuild.run": "onSave",
+  "latex-workshop.view.pdf.viewer": "tab",
+
+  // tectonic writes main.pdf next to main.tex; don't clutter the explorer.
+  "latex-workshop.latex.autoClean.run": "onBuilt",
+  "latex-workshop.latex.clean.fileTypes": ["*.aux", "*.log", "*.out", "*.synctex.gz", "*.bbl", "*.blg"]
+}

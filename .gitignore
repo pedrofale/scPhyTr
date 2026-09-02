@@ -18,3 +18,12 @@ scphytr.egg-info/
 data/external/
 # EvoGeneX bridge scratch (regenerated per run)
 analysis/benchmark/evogenex_work/
+
+# LaTeX build artifacts
+paper/*.pdf
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.bbl
+paper/*.blg
+paper/*.synctex.gz

@@ -1,0 +1,449 @@
+\documentclass[11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{newtxtext,newtxmath}
+\usepackage[margin=1.15in]{geometry}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\definecolor{link}{HTML}{2F4A8C}
+\usepackage[colorlinks=true,linkcolor=link,citecolor=link,urlcolor=link]{hyperref}
+
+\setlist[itemize]{itemsep=2pt,topsep=4pt,parsep=0pt}
+\newtheorem{proposition}{Proposition}
+\newcommand{\yv}{\mathbf{y}}
+\newcommand{\Cm}{\mathbf{C}}
+\newcommand{\Dm}{\mathbf{D}}
+\newcommand{\Idm}{\mathbf{I}}
+\newcommand{\Km}{\mathbf{K}}
+\newcommand{\Wm}{\mathbf{W}}
+\newcommand{\one}{\mathbf{1}}
+\newcommand{\thetav}{\boldsymbol{\theta}}
+\newcommand{\Sig}{\boldsymbol{\Sigma}}
+\newcommand{\BM}{\mathrm{BM1}}
+\newcommand{\OUo}{\mathrm{OU1}}
+\newcommand{\OUx}{\mathrm{OUx}}
+\newcommand{\E}{\mathbb{E}}
+
+\title{\vspace{-2em}A Bayesian formulation of SCOUT's per-gene test\\for adaptive expression evolution}
+\author{\normalsize\texttt{sparseou} technical note --- specification for \texttt{stan/scout.stan}}
+\date{\normalsize 25 August 2026}
+
+\begin{document}
+\maketitle
+\vspace{-1.5em}
+
+\begin{abstract}
+\noindent
+SCOUT fits three hypotheses to each gene on a single-cell lineage tree --- neutral drift, stabilising
+selection on one optimum, and adaptation to several regime-specific optima --- and reports the
+minimum-AICc winner as a single word. At small tree sizes that word is correct only slightly more
+often than chance, and it carries no statement of confidence. This note specifies the same three
+hypotheses as a Bayesian model comparison. The discrete model indicator is marginalised analytically,
+so a single fit per gene returns posterior model probabilities together with posteriors for the
+selection strength, the drift rate and the optima. The formulation is deliberately \emph{not}
+hierarchical: genes are treated independently, exactly as SCOUT treats them, so that it can serve as
+an honest baseline against which pooling across genes is later measured.
+\end{abstract}
+
+\section{What changes, and what does not}
+
+Given a rooted lineage tree, a gene's expression at the tips, and a \emph{supplied} partition of the
+tips into regimes, SCOUT fits three models by maximum likelihood, penalises each by its parameter
+count through AICc, and returns the argmax. Two properties of that procedure motivate what follows.
+
+First, the output is a hard label. A gene whose evidence is evenly split between two hypotheses
+receives the same kind of answer as one whose evidence is overwhelming. Second, AICc is an asymptotic
+criterion, and it is being applied at tree sizes as small as $n = 32$.
+
+Replacing the argmax with a posterior addresses both: integrating over parameters rather than
+maximising, and reporting $\Pr(M \mid \yv)$ rather than $\arg\max$. What does \emph{not} change is the
+scientific question, the likelihood, or the requirement that the adaptive landscape be supplied.
+
+\section{Setup and notation}
+
+Let the tree be rooted and \textbf{ultrametric}, with $n$ tips and height $H$. Fix one gene and let
+$\yv \in \mathbb{R}^{n}$ be its expression across the tips, standardised to zero mean and unit
+variance. Write
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+$K$ & number of supplied regimes, $k = 1,\dots,K$ \\
+$r(u) \in \{1,\dots,K\}$ & regime painted on the branch at time $u$ --- data, not inferred \\
+$H$ & root-to-tip time, identical for every tip \\
+$D_{ij} = 2\bigl(H - t_{\mathrm{mrca}(i,j)}\bigr)$ & patristic distance between tips $i$ and $j$ \\
+$C_{ij} = t_{\mathrm{mrca}(i,j)}$ & shared root-to-MRCA path length \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+Throughout, $\Km(\alpha)$ denotes the $n \times n$ matrix with entries
+\begin{equation}
+\bigl[\Km(\alpha)\bigr]_{ij} \;=\; e^{-\alpha D_{ij}},
+\end{equation}
+which is an elementwise exponential of $-\alpha\Dm$, not a matrix exponential. Both Ornstein--Uhlenbeck
+hypotheses share the covariance
+\begin{equation}
+\Sig(\alpha, s, \tau) \;=\; s^{2}\,\Km(\alpha) \;+\; \tau^{2}\,\Idm .
+\label{eq:sig}
+\end{equation}
+
+\section{The three hypotheses}
+
+A single discrete parameter carries the scientific question,
+\begin{equation}
+M \in \{\BM,\ \OUo,\ \OUx\}, \qquad \Pr(M = m) = \pi_m, \qquad \pi = (\tfrac13,\tfrac13,\tfrac13),
+\end{equation}
+and everything else in the model exists to give it something to weigh. All three hypotheses are
+multivariate normal over the tips; they differ only in the \emph{mean} --- whether there is an
+optimum at all, and whether it is the same everywhere on the tree.
+
+\paragraph{Neutral drift.}
+Brownian motion started at $\theta_{\mathrm{bm}}$, with no mean reversion, so variance accumulates
+with shared ancestry:
+\begin{equation}
+\yv \mid M = \BM \;\sim\; \mathcal{N}_{n}\!\left(\theta_{\mathrm{bm}}\one_{n},\;
+   \sigma_{\mathrm{bm}}^{2}\,\Cm + \tau_{1}^{2}\,\Idm\right).
+\end{equation}
+
+\paragraph{One global optimum.}
+An Ornstein--Uhlenbeck process
+\begin{equation}
+dX(t) \;=\; \alpha\bigl(\theta - X(t)\bigr)\,dt \;+\; \sigma\,dW(t),
+\label{eq:ou}
+\end{equation}
+with the root drawn from its stationary distribution about that optimum. Being stationary, the mean
+is $\theta$ everywhere and the covariance depends on the tips only through patristic distance:
+\begin{equation}
+\yv \mid M = \OUo \;\sim\; \mathcal{N}_{n}\!\left(\theta_{1}\one_{n},\; \Sig(\alpha_{1}, s_{1}, \tau_{2})\right).
+\end{equation}
+The scale is parameterised by the \emph{stationary} standard deviation $s^{2} = \sigma^{2}/(2\alpha)$
+rather than by $\sigma$, since $s$ is comparable across values of $\alpha$ and takes a prior on the
+same footing as the standardised data; $\sigma = s\sqrt{2\alpha}$ is recovered afterwards.
+
+\paragraph{One optimum per regime.}
+The same process, but with an optimum that is piecewise constant along the tree,
+$\theta(u) = \theta_{r(u)}$:
+\begin{equation}
+\yv \mid M = \OUx \;\sim\; \mathcal{N}_{n}\!\left(\Wm(\alpha_{3})\,\thetav,\; \Sig(\alpha_{3}, s_{3}, \tau_{3})\right),
+\qquad \thetav \in \mathbb{R}^{K}.
+\label{eq:oux}
+\end{equation}
+
+\paragraph{Nesting.}
+$\BM$ is the $\alpha \to 0$ limit of $\OUo$, and $\OUo$ is $\OUx$ with all $\theta_k$ equal. They are
+nonetheless fitted as three hypotheses with their own parameters rather than as restrictions of one,
+so that each carries an uncontaminated marginal likelihood.
+
+\section{The exposure matrix}
+
+Integrating \eqref{eq:ou} along the root-to-tip path of tip $i$ gives
+\begin{equation}
+X(H) \;=\; e^{-\alpha H} X(0) \;+\; \int_{0}^{H}\!\alpha\, e^{-\alpha(H-u)}\,\theta(u)\,du
+   \;+\; \sigma\!\int_{0}^{H}\! e^{-\alpha(H-u)}\,dW(u).
+\end{equation}
+Let $\mathcal{P}(i)$ be the decomposition of that path into maximal segments $(k, a, b)$, meaning
+regime $k$ occupies the time interval $[a,b]$. With the root started at its own optimum, the
+stochastic term has mean zero and
+\begin{equation}
+\E[y_i] \;=\; e^{-\alpha H}\theta_{r(0)}
+   \;+\!\! \sum_{(k,a,b) \in \mathcal{P}(i)}\!\! \theta_{k}\left(e^{-\alpha(H-b)} - e^{-\alpha(H-a)}\right)
+   \;=\; \bigl[\Wm(\alpha)\thetav\bigr]_{i}.
+\label{eq:W}
+\end{equation}
+
+Each row of $\Wm$ records how much of that tip's ancestry sits in each regime, discounted by how
+quickly the process forgets: a tip that entered a regime long ago has arrived at its optimum, while
+one that entered recently still carries its ancestor's.
+
+\begin{proposition}[$\Wm$ is row-stochastic]
+For every tip $i$ and every $\alpha > 0$, $\sum_{k} W_{ik}(\alpha) = 1$.
+\end{proposition}
+\begin{proof}
+The segments of $\mathcal{P}(i)$ tile $[0,H]$ contiguously, so the sum in \eqref{eq:W} telescopes to
+$e^{-\alpha(H-H)} - e^{-\alpha(H-0)} = 1 - e^{-\alpha H}$. Adding the root term $e^{-\alpha H}$ gives
+unity.
+\end{proof}
+
+\noindent
+The tip mean is therefore a genuine weighted average of the optima. This is worth verifying
+numerically rather than assuming: it fails immediately if the regime painting or the segment
+decomposition is wrong, and it is the cheapest available check on both.
+
+\section{Priors}
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Parameter & Prior & Role \\
+\midrule
+$\theta_{\mathrm{bm}},\,\theta_{1},\,\theta_{k}$ & $\mathcal{N}(0, s_{\theta}^{2})$ & optima --- see \S\ref{sec:occam} \\
+$\sigma_{\mathrm{bm}},\, s_{1},\, s_{3}$ & $\mathcal{N}^{+}(0, s_{\mathrm{scale}}^{2})$ & drift rate / stationary spread \\
+$h_{1},\, h_{3}$ & $\mathrm{LogNormal}(0, s_{h}^{2})$ & phylogenetic half-life, in tree heights \\
+$\tau_{1},\, \tau_{2},\, \tau_{3}$ & $\mathcal{N}^{+}(0, s_{\tau}^{2})$ & measurement error \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+Selection strength is parameterised by half-life relative to tree height rather than by $\alpha$
+directly,
+\begin{equation}
+\alpha_{m} \;=\; \frac{\ln 2}{h_{m} H}, \qquad m \in \{\OUo, \OUx\},
+\end{equation}
+so that $h = 1$ reads as ``the optimum is reached over the tree's lifetime''. The reparameterisation
+keeps the sampler away from both degenerate ends: $\alpha \to 0$, where the process is
+indistinguishable from drift, and $\alpha \to \infty$, where it is indistinguishable from white noise.
+
+\section{Inference}
+
+Stan cannot sample a discrete parameter, so the indicator is summed out. Writing $\phi$ for the
+collection of continuous parameters and $\ell_{m}(\phi) = \log p(\yv \mid \phi, M = m)$, the sampled
+log-density is
+\begin{equation}
+\log p(\yv, \phi) \;=\; \log \sum_{m} \exp\bigl\{\log \pi_{m} + \ell_{m}(\phi)\bigr\} \;+\; \log p(\phi).
+\end{equation}
+
+Because $\Pr(M = m \mid \yv) = \int \Pr(M = m \mid \phi, \yv)\, p(\phi \mid \yv)\, d\phi$, the model
+probability is the posterior mean of a quantity available at every draw. No bridge sampling and no
+separate marginal-likelihood machinery is required:
+\begin{equation}
+\Pr(M = m \mid \yv) \;=\; \E_{\phi \mid \yv}
+   \left[\frac{\pi_{m}\exp \ell_{m}(\phi)}{\sum_{j} \pi_{j}\exp \ell_{j}(\phi)}\right].
+\label{eq:pm}
+\end{equation}
+This is a Rao--Blackwellised estimator: the conditional probability is evaluated exactly at each
+draw and averaged, rather than the indicator being sampled and its visits counted.
+
+The output per gene is three numbers summing to one. A gene whose evidence is genuinely ambiguous
+returns something near $(0.3, 0.4, 0.3)$ instead of a confident single word --- which is the entire
+point of the exercise.
+
+\section{The prior on the optima is the Occam penalty}
+\label{sec:occam}
+
+Of all the priors in the model, $s_{\theta}$ is the one that is not a nuisance. Marginalising the
+optima out of \eqref{eq:oux} analytically, which is possible in closed form because the mean is
+linear in $\thetav$, gives
+\begin{equation}
+p(\yv \mid M = \OUx, \alpha, s, \tau) \;=\; \mathcal{N}_{n}\!\left(\yv \;\middle|\; \mathbf{0},\;
+   \Sig(\alpha, s, \tau) + s_{\theta}^{2}\,\Wm(\alpha)\Wm(\alpha)^{\!\top}\right).
+\label{eq:occam}
+\end{equation}
+
+The penalty is now explicit. Freeing $K$ optima inflates the covariance by $s_{\theta}^{2}\Wm\Wm^{\top}$,
+a rank-$K$ term, and the resulting log-determinant grows like $K \log s_{\theta}$. That is what
+replaces AICc's $2k$: a larger $s_{\theta}$ improves the fit but is charged for the additional freedom.
+Set $s_{\theta}$ wide and $\OUx$ can never win; set it narrow and it wins too easily.
+
+Nothing else in the model carries comparable leverage over the answer. It is therefore exposed as
+data rather than fixed internally, and a sweep across it belongs in the results rather than in a
+robustness appendix. Note that \eqref{eq:occam} also suggests a more efficient implementation than
+the one specified here, in which $\thetav$ is never sampled; that is deliberately deferred, since
+posteriors for the individual optima are wanted as an output.
+
+\section{Numerical considerations}
+
+\begin{itemize}
+  \item A fixed $10^{-8}\Idm$ is added to every covariance. As $\alpha \to 0$, $\Km(\alpha) \to \one\one^{\top}$,
+    which has rank one; without the jitter every Cholesky factorisation fails at the low-$\alpha$ end
+    of the prior.
+  \item $h_{m}$ is bounded to $[10^{-4}, 10^{4}]$, keeping $\Km(\alpha)$ clear of overflow and underflow.
+  \item $\BM$ is evaluated in the eigenbasis of $\Cm$. Since $\Cm$ and $\yv$ are both data, the
+    decomposition and the rotation of $\yv$ are performed once, leaving only scalars to vary --- so
+    $\BM$ costs $O(n)$ per gradient evaluation rather than $O(n^{3})$. The two OU hypotheses retain
+    independent $\alpha$, as OUwie does, and so require a Cholesky factorisation each.
+  \item Chains are started from \emph{jittered} initial values. Identical starts leave $\hat{R}$
+    unable to detect between-chain disagreement: a 256-tip fit reported $\hat{R} = 1.09$ from
+    identical inits and $\hat{R} = 1.01$ once jittered.
+\end{itemize}
+
+\section{Scope, and deviations from SCOUT}
+
+Deliberately excluded: any sharing of information across genes --- that is the hierarchical model
+this specification exists to be a baseline for. Regimes are supplied, never inferred. Expression is
+Gaussian on log-normalised counts, with no count model. Trees are ultrametric, and the dense Cholesky
+caps practical tree size near $n = 256$.
+
+Three deviations from SCOUT are genuine and should be treated as open until checked against the
+original OUwie implementation.
+
+\begin{itemize}
+  \item \textbf{The measurement-error term $\tau$.} SCOUT's smoothed arm has no such parameter,
+    though their EM and tip-fog arms do. It is included here because lineage smoothing multiplies the
+    data by a similarity matrix $\mathbf{S}$, giving a covariance $\mathbf{S}\Sig\mathbf{S}^{\top}$
+    that no Ornstein--Uhlenbeck process can produce. A generative model fitted to smoothed data
+    absorbs that mismatch as spurious signal.
+  \item \textbf{Regime painting.} SCOUT paints internal branches using \texttt{ape::ace} under an
+    equal-rates Mk model. The present implementation uses a deterministic parsimony rule, which
+    coincides on simulated trees where clades are regime-coherent, and may not on real data.
+  \item \textbf{Root treatment.} The root is placed at its own optimum here. OUwie exposes a
+    \texttt{root.station} option; if their setting differs, the $\OUo$ and $\OUx$ likelihoods differ
+    in a way that no amount of correctness in the Stan program would reveal.
+\end{itemize}
+
+\section{Recovery study I: neutral drift}
+\label{sec:recovery-bm}
+
+Before any model comparison is attempted, each hypothesis should be checked in isolation: simulate a
+gene from it, fit that hypothesis alone, and ask whether the generating parameters come back. This
+section does so for $\BM$. The gene is simulated from exactly the model being fitted, $\BM$ is fitted
+alone (no competing hypotheses, no model indicator), and the data are deliberately \emph{not}
+standardised, so $\sigma$, $\tau$ and $\theta$ retain their generating units and recovery is a real
+check rather than a check up to an unknown rescaling.
+
+\subsection*{What is being asked}
+
+The generating process is Brownian motion on a height-one ultrametric tree, observed with additive
+noise:
+\begin{equation}
+y_i \;=\; X(t_i) \;+\; \varepsilon_i, \qquad
+X \sim \mathrm{BM}\bigl(\theta_{\mathrm{bm}},\, \sigma_{\mathrm{bm}}^{2}\bigr), \qquad
+\varepsilon_i \overset{\text{iid}}{\sim} \mathcal{N}(0, \tau^{2}),
+\end{equation}
+with $\theta_{\mathrm{bm}} = 2$, $\sigma_{\mathrm{bm}} = 1$, $\tau = 0.3$. The three parameters play
+quite different roles, and it is worth being explicit about what success would even look like for
+each.
+
+\paragraph{$\sigma_{\mathrm{bm}}$, the drift rate.} Estimated from the $\binom{n}{2}$ pairwise
+contrasts, whose expected squared differences grow with patristic distance. Information accumulates
+with $n$; this should recover sharply.
+
+\paragraph{$\tau$, the measurement error.} Identified by \emph{sister pairs}. Two tips separated by a
+very short path should be nearly identical under pure drift; the extent to which they are not is
+$\tau$. A tree with many recent splits is informative about $\tau$; a star tree would not be.
+
+\paragraph{$\theta_{\mathrm{bm}}$, the root state.} This is the interesting one, and the reason the
+study is worth running. Every tip descends from one root, so the $n$ tips do not furnish $n$
+independent observations of $\theta$. The generalised-least-squares variance is
+\begin{equation}
+\operatorname{Var}(\hat\theta_{\mathrm{bm}}) \;=\; \bigl(\one^{\!\top} V^{-1} \one\bigr)^{-1},
+\qquad V \;=\; \sigma_{\mathrm{bm}}^{2}\,\Cm + \tau^{2}\,\Idm,
+\label{eq:gls}
+\end{equation}
+which is computable before any sampling and is far larger than the na\"ive $\sqrt{\mathrm{var}/n}$.
+Writing $n_{\mathrm{eff}} = (\sigma^{2} + \tau^{2}) / \operatorname{Var}(\hat\theta)$ for the number
+of independent observations the tree is effectively worth:
+
+\begin{center}
+\begin{tabular}{@{}rccc@{}}
+\toprule
+$n$ tips & $\operatorname{sd}(\hat\theta_{\mathrm{bm}})$ from \eqref{eq:gls} & if tips were iid & $n_{\mathrm{eff}}$ \\
+\midrule
+ 32 & 0.443 & 0.185 & 5.6 \\
+ 64 & 0.407 & 0.131 & 6.6 \\
+128 & 0.377 & 0.092 & 7.7 \\
+256 & 0.353 & 0.065 & 8.7 \\
+512 & 0.333 & 0.046 & 9.8 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+Sixteen-fold more data buys roughly four more effective observations: $n_{\mathrm{eff}}$ grows like
+$\log_2 n$, not like $n$. This is not a defect of the estimator but a property of the design ---
+a phylogeny is a deeply nested sampling scheme, and the root is the one quantity all of it shares.
+It gives a sharp, pre-registered prediction: \textbf{a correct implementation must return a posterior
+for $\theta_{\mathrm{bm}}$ roughly four times wider than iid intuition suggests, and that width must
+barely shrink as $n$ grows.} An implementation that reported $\operatorname{sd} \approx 0.09$ at
+$n = 128$ would be confidently wrong, and no amount of posterior-predictive checking on the tips
+would reveal it.
+
+\subsection*{What Stan returns}
+
+$\BM$ was fitted alone to one simulated dataset at each of four tree sizes, four chains, 1000
+warm-up and 1000 sampling iterations. Every fit reported $\hat{R} \le 1.005$ and zero divergent
+transitions, and each took under $1.3$ seconds.
+
+\begin{center}
+\begin{tabular}{@{}rccccc@{}}
+\toprule
+$n$ & $\theta_{\mathrm{bm}}$ (truth $2.0$) & $\sigma_{\mathrm{bm}}$ (truth $1.0$) & $\tau$ (truth $0.3$)
+  & $\operatorname{sd}(\theta)$ predicted & $\hat{R}$ \\
+\midrule
+ 32 & $1.89 \pm 0.28$ & $0.55 \pm 0.27$ & $0.50 \pm 0.16$ & $0.443$ & $1.003$ \\
+ 64 & $2.65 \pm 0.45$ & $1.09 \pm 0.16$ & $0.27 \pm 0.15$ & $0.407$ & $1.002$ \\
+128 & $2.41 \pm 0.376$ & $1.008 \pm 0.114$ & $0.23 \pm 0.11$ & $\mathbf{0.377}$ & $1.005$ \\
+256 & $1.77 \pm 0.40$ & $1.15 \pm 0.08$ & $0.16 \pm 0.09$ & $0.353$ & $1.004$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Two things in that table matter more than the fact that the intervals contain the truth.
+
+First, at $n = 128$ the posterior standard deviation of $\theta_{\mathrm{bm}}$ is $0.3756$ against the
+$0.377$ predicted by \eqref{eq:gls} --- agreement to $0.4\%$ on a quantity computed before sampling
+began. That is a far stronger check than coverage of a point value, because it tests the covariance
+structure rather than just the location.
+
+Second, the $\operatorname{sd}(\theta)$ column is effectively flat across an eightfold increase in
+tips while the iid expectation falls from $0.185$ to $0.065$. The predicted non-shrinkage is visible
+in the fitted output, not merely in the algebra.
+
+At $n = 32$ the fit is genuinely poor: $\sigma = 0.55$ against a true $1.0$, with $\tau$
+correspondingly inflated to $0.50$. This is the drift--noise trade-off, not a bug. Both parameters
+add variance, and $32$ tips do not contain enough short branches to separate a slow diffusion from a
+noisy observation of a fast one. Across $150$ replicate datasets the posterior means of
+$\sigma_{\mathrm{bm}}$ and $\tau$ correlate at $r = -0.73$.
+
+\subsection*{Calibration}
+
+Recovery on a single dataset cannot distinguish a correct implementation from a lucky one. The model
+was therefore refitted to $150$ independently simulated datasets at $n = 128$, asking how often the
+central credible intervals contain the generating value. Nominal coverage should be recovered within
+Monte Carlo error, and is:
+
+\begin{center}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Parameter & $50\%$ interval & $90\%$ interval & mean posterior mean \\
+\midrule
+$\theta_{\mathrm{bm}}$ & $0.467 \pm 0.080$ & $0.853 \pm 0.057$ & $1.935$ \quad (truth $2.0$) \\
+$\sigma_{\mathrm{bm}}$ & $0.520 \pm 0.080$ & $0.927 \pm 0.042$ & $1.007$ \quad (truth $1.0$) \\
+$\tau$                 & $0.520 \pm 0.080$ & $0.873 \pm 0.053$ & $0.265$ \quad (truth $0.3$) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+All six figures sit within two standard errors of nominal, and no fit in the $150$ produced a single
+divergent transition. The one visible bias is in $\tau$, whose posterior mean averages $0.265$ against
+a true $0.3$: the half-normal prior pulls a small positive parameter toward zero. Interval coverage is
+unaffected, so this is prior shrinkage behaving as specified rather than an error.
+
+\paragraph{Scope of this check.} Coverage is evaluated at one fixed parameter value, not averaged over
+the prior, so it is a frequentist calibration statement rather than simulation-based calibration.
+Full SBC --- drawing the generating parameters from the prior at each replicate --- is the stronger
+test and is now cheap, since a fit takes well under a second.
+
+\section{Validation status}
+
+\begin{center}
+\begin{tabular}{@{}llp{6.6cm}@{}}
+\toprule
+Check & Status & Result \\
+\midrule
+$\Wm(\alpha)$ vs.\ reference construction & done & agrees to $10^{-16}$; rows sum to $1$ \\
+$\BM$ likelihood vs.\ independent ML & done & exact to four decimals \\
+$\OUo$, $\OUx$ vs.\ independent ML & done & agree to $0.005$ where the optimiser converges \\
+Sampling behaviour at $n = 256$ & done & $\hat{R} \le 1.02$, ESS $\ge 250$, jittered inits \\
+Independent ML vs.\ original OUwie & \emph{open} & gates everything below \\
+Accuracy and calibration on truth-labelled data & \emph{open} & \\
+Behaviour across tree size & \emph{open} & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+The first four checks establish that the program computes the intended likelihood. They say nothing
+about whether that likelihood is SCOUT's, which is the purpose of the fifth --- and which matters,
+because a faithful reimplementation of a drifted reimplementation is still drifted.
+
+\end{document}
