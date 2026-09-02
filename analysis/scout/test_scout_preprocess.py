@@ -9,10 +9,11 @@ import os
 import numpy as np
 import pandas as pd
 
-from sparseou.tree import Tree
-from sparseou.preprocess import lineage_smooth, patristic, log_normalize
+from scphytr.modes._tree import Tree
+from analysis.scout.scout_preprocess import lineage_smooth, patristic, log_normalize
 
-FIX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+FIX = os.path.join(_ROOT, "tests", "fixtures")
 
 
 def _load():

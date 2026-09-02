@@ -18,18 +18,18 @@ We sweep the per-gene effect size and compare:
 
 The gap between the two curves is the headroom the hierarchical model is designed to exploit.
 
-    PYTHONPATH=src python experiments/05_pooling_gap.py
+    python -m analysis.scout.experiments.05_pooling_gap
 """
 import os
 
 import numpy as np
 import pandas as pd
 
-from sparseou.tree import Tree
-from sparseou.simulate import simulate_tips, leaf_regimes
-from sparseou.preprocess import scout_preprocess
-from sparseou.scout_baseline import paint_regimes, regime_design, _profile, _aicc
-from sparseou.ou import tip_cov
+from scphytr.modes._tree import Tree
+from scphytr.modes.simulate import simulate_tips, leaf_regimes
+from analysis.scout.scout_preprocess import scout_preprocess
+from scphytr.modes.baseline import paint_regimes, regime_design, _profile, _aicc
+from scphytr.modes._ou import tip_cov
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ALPHA, SIGMA, DEPTH = 3.0, 0.75, 30.0

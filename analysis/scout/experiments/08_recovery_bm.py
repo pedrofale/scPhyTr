@@ -13,7 +13,7 @@ at all". Every tip shares one root, so the root state theta has an analytic post
 which is far larger than the iid intuition sqrt(var/n) and barely improves with n. That number is
 computed before sampling and is the sharpest available test of the implementation.
 
-    PYTHONPATH=src python experiments/08_recovery_bm.py
+    python -m analysis.scout.experiments.08_recovery_bm
 """
 import os, time
 
@@ -24,10 +24,10 @@ import numpy as np
 import pandas as pd
 import arviz as az
 
-from sparseou.tree import Tree
-from sparseou.ou import tip_cov
-from sparseou.simulate import simulate_tips, leaf_regimes
-from sparseou.stan_scout import get_model, fit_gene
+from scphytr.modes._tree import Tree
+from scphytr.modes._ou import tip_cov
+from scphytr.modes.simulate import simulate_tips, leaf_regimes
+from analysis.scout.stan_scout import get_model, fit_gene
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(HERE, "results", "recovery_bm")

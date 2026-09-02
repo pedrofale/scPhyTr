@@ -12,7 +12,7 @@ The tree never enters Stan. Each root-to-tip path is precomputed here as a list 
                      exp(-alpha (T_i - end)) - exp(-alpha (T_i - start))
 
 plus ``exp(-alpha T_i)`` on the root regime. :func:`regime_weights` is the numpy twin of that loop
-and is checked against :func:`sparseou.scout_baseline.regime_design`.
+and is checked against :func:`scphytr.modes.baseline.regime_design`.
 """
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 
-from .ou import tip_cov
-from .preprocess import patristic
-from .scout_baseline import paint_regimes
+from scphytr.modes._ou import tip_cov
+from analysis.scout.scout_preprocess import patristic
+from scphytr.modes.baseline import paint_regimes
 
 __all__ = ["regime_segments", "regime_weights", "stan_data", "get_model", "default_inits",
            "fit_gene", "fit_genes"]

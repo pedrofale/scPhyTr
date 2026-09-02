@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .tree import Tree
+from scphytr.modes._tree import Tree
 
 __all__ = ["load_scout_dataset", "truth_from_gene_names", "write_scout_dataset", "write_newick"]
 
@@ -107,7 +107,7 @@ def write_scout_dataset(path_prefix, Y, tree, leaf_regime=None, gene_names=None,
 
 
 def write_newick(tree, path=None):
-    """Serialise a :class:`sparseou.tree.Tree` back to Newick (names + branch lengths)."""
+    """Serialise a :class:`scphytr.modes._tree.Tree` back to Newick (names + branch lengths)."""
     def rec(v):
         if tree.is_leaf[v]:
             s = tree.name[v]

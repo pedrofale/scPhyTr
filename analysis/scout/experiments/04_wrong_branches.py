@@ -16,17 +16,17 @@ The expected -- and more damning -- pattern is not that random labels create fal
 penalises the extra optima), but that *phylogenetically plausible but wrong* branches inherit the
 signal and score comparably to the truth, so a confident OUx call does not localise the event.
 
-    PYTHONPATH=src python experiments/04_wrong_branches.py
+    python -m analysis.scout.experiments.04_wrong_branches
 """
 import os
 
 import numpy as np
 import pandas as pd
 
-from sparseou.tree import Tree
-from sparseou.simulate import simulate_tips, leaf_regimes
-from sparseou.preprocess import scout_preprocess
-from sparseou.scout_baseline import classify_genes, fit_models, paint_regimes
+from scphytr.modes._tree import Tree
+from scphytr.modes.simulate import simulate_tips, leaf_regimes
+from analysis.scout.scout_preprocess import scout_preprocess
+from scphytr.modes.baseline import classify_genes, fit_models, paint_regimes
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ALPHA, SIGMA, SHIFT, DEPTH, G = 3.0, 0.75, 2.0, 30.0, 30

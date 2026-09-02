@@ -8,7 +8,7 @@ transform; that is the arm we match here (no count layer yet).
 This gives us a like-for-like per-gene baseline implemented in our own likelihood, with no R and no
 TedSim -- the reference the hierarchical sparse model must beat.
 
-    PYTHONPATH=src python experiments/01_scout_benchmark.py [--sizes 32,64,128,256,512]
+    python -m analysis.scout.experiments.01_scout_benchmark
 """
 import argparse
 import time
@@ -16,9 +16,9 @@ import time
 import numpy as np
 import pandas as pd
 
-from sparseou.tree import Tree
-from sparseou.simulate import simulate_tips, leaf_regimes
-from sparseou.scout_baseline import classify_genes
+from scphytr.modes._tree import Tree
+from scphytr.modes.simulate import simulate_tips, leaf_regimes
+from scphytr.modes.baseline import classify_genes
 
 ALPHA, SIGMA = 0.75, 0.75
 N_PER_CLASS = 50

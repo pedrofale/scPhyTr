@@ -11,7 +11,7 @@ Everything is maximally generous to SCOUT: it is given the true adaptive landsca
 preprocessing (log1p + lineage smoothing, k=8), and data simulated from an OU regime shift.
 Model 1 is given the tree and the expression matrix only -- no landscape, no responders, no alpha.
 
-    PYTHONPATH=src python experiments/06_model1_vs_oracle.py
+    python -m analysis.scout.experiments.06_model1_vs_oracle
 """
 import importlib.util
 import os
@@ -19,9 +19,9 @@ import os
 import numpy as np
 import pandas as pd
 
-from sparseou.tree import Tree
-from sparseou.preprocess import scout_preprocess
-from sparseou.model1 import fit_model1, branch_evidence
+from scphytr.modes._tree import Tree
+from analysis.scout.scout_preprocess import scout_preprocess
+from scphytr.modes.model import fit_model1, branch_evidence
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _spec = importlib.util.spec_from_file_location(

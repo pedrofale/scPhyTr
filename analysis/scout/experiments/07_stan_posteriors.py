@@ -10,7 +10,7 @@ class, so every posterior can be read against the value that generated it:
 alpha is invariant to affine rescaling of y, so it is directly comparable to truth even though the
 model standardises its input; optimum contrasts are rescaled by sd(y) before comparison.
 
-    PYTHONPATH=src python experiments/07_stan_posteriors.py
+    python -m analysis.scout.experiments.07_stan_posteriors
 """
 import os, sys, time
 
@@ -20,9 +20,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import arviz as az
 
-from sparseou.tree import Tree
-from sparseou.simulate import simulate_tips, leaf_regimes
-from sparseou.stan_scout import get_model, fit_gene, stan_data
+from scphytr.modes._tree import Tree
+from scphytr.modes.simulate import simulate_tips, leaf_regimes
+from analysis.scout.stan_scout import get_model, fit_gene, stan_data
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(HERE, "results", "arviz")

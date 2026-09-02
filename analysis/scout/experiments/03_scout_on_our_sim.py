@@ -7,7 +7,7 @@ This is the harness the hierarchical model will eventually be measured in. Note 
 the TRUE regime labels (the adaptive landscape it requires), which is the fair setting for a
 gene-level classification comparison.
 
-    PYTHONPATH=src python experiments/03_scout_on_our_sim.py [--n 256] [--method SM]
+    python -m analysis.scout.experiments.03_scout_on_our_sim
 """
 import argparse
 import glob
@@ -18,11 +18,11 @@ import sys
 import numpy as np
 import pandas as pd
 
-from sparseou.tree import Tree
-from sparseou.simulate import simulate_tips, leaf_regimes
-from sparseou.scout_io import write_scout_dataset
-from sparseou.scout_baseline import classify_genes
-from sparseou.preprocess import scout_preprocess
+from scphytr.modes._tree import Tree
+from scphytr.modes.simulate import simulate_tips, leaf_regimes
+from analysis.scout.scout_io import write_scout_dataset
+from scphytr.modes.baseline import classify_genes
+from analysis.scout.scout_preprocess import scout_preprocess
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ALPHA, SIGMA, N_PER_CLASS = 0.75, 0.75, 30

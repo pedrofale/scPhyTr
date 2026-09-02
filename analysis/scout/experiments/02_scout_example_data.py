@@ -8,16 +8,16 @@ smoothing) using our port of their `lineage_smooth`, which is validated to 1e-14
 (see tests/test_preprocess.py). This reproduces their central methodological claim: smoothing
 rescues true-neutral genes that noise otherwise pushes into the constrained (OU1) class.
 
-    PYTHONPATH=src python experiments/02_scout_example_data.py
+    python -m analysis.scout.experiments.02_scout_example_data
 """
 import os
 
 import numpy as np
 import pandas as pd
 
-from sparseou.scout_io import load_scout_dataset, truth_from_gene_names
-from sparseou.scout_baseline import classify_genes
-from sparseou.preprocess import scout_preprocess
+from analysis.scout.scout_io import load_scout_dataset, truth_from_gene_names
+from scphytr.modes.baseline import classify_genes
+from analysis.scout.scout_preprocess import scout_preprocess
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EX = os.path.join(HERE, "external", "SCOUT", "examples", "sim_example")

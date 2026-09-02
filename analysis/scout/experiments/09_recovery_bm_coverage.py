@@ -2,9 +2,9 @@
 import sys, time; sys.path.insert(0,'src')
 import numpy as np, pandas as pd
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
-from sparseou.tree import Tree
-from sparseou.simulate import simulate_tips, leaf_regimes
-from sparseou.stan_scout import get_model, fit_gene
+from scphytr.modes._tree import Tree
+from scphytr.modes.simulate import simulate_tips, leaf_regimes
+from analysis.scout.stan_scout import get_model, fit_gene
 
 SIGMA_T, TAU_T, THETA_T, N, R = 1.0, 0.3, 2.0, 128, 150
 model = get_model()
@@ -44,7 +44,7 @@ for nm, truth in (("theta",THETA_T),("sigma",SIGMA_T),("tau",TAU_T)):
     c50, c90 = df[f"{nm}_cov50"].mean(), df[f"{nm}_cov90"].mean()
     print(f"{nm:>7} {c50:8.3f} +-{se(c50,R):5.3f} {c90:8.3f} +-{se(c90,R):5.3f}   "
           f"{df[f'{nm}_mean'].mean():8.3f}  (truth {truth})")
-print(f"total divergences across all {R} fits: {df["div"].sum()}")
+print(f"total divergences across all {R} fits: {df['div'].sum()}")
 
 fig, axes = plt.subplots(1,3, figsize=(12.5,3.5))
 for ax,(nm,lab) in zip(axes, [("theta",r"$\theta_{bm}$"),("sigma",r"$\sigma_{bm}$"),("tau",r"$\tau$")]):

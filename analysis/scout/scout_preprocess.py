@@ -47,7 +47,7 @@ def clean_edges(tree, zero_replacement=ZERO_EDGE_REPLACEMENT, inplace=True):
 
 
 def _copy_tree(tree):
-    from .tree import Tree
+    from scphytr.modes._tree import Tree
     return Tree(tree.parent.copy(), tree.dist.copy(), list(tree.name),
                 [list(c) for c in tree.children])
 
