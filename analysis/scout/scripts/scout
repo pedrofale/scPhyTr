@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Thin wrapper: run the ORIGINAL SCOUT via the CRAN R that has our project-local library.
+exec /Library/Frameworks/R.framework/Resources/bin/Rscript \
+  "$(cd "$(dirname "$0")" && pwd)/run_scout.R" "$@"

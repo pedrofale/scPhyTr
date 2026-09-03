@@ -1,0 +1,9 @@
+  64 tips     13.9s/gene  P=(BM1 0.000, OU1 0.000, OUX 1.000) call=OUX rhat=1.009 div=2
+ 128 tips     78.4s/gene  P=(BM1 0.000, OU1 0.000, OUX 1.000) call=OUX rhat=1.006 div=0
+ 256 tips    536.1s/gene  P=(BM1 0.000, OU1 0.000, OUX 1.000) call=OUX rhat=1.018 div=15
+
+--- after BM1 closed form + inits (separate alphas kept) ---
+BM1 closed form, BM1 gene:  ML  -76.1519  Stan  -76.1519  diff +0.0000
+BM1 closed form, OUX gene:  ML  -42.3837  Stan  -42.3837  diff -0.0000
+ 128 tips     56.2s/gene  P=(BM1 0.000, OU1 0.000, OUX 1.000) call=OUX rhat=1.007 div=0
+ 256 tips    357.5s/gene  P=(BM1 0.000, OU1 0.000, OUX 1.000) call=OUX rhat=1.090 div=45

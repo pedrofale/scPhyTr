@@ -1,0 +1,132 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{newtxtext,newtxmath}
+\usepackage[margin=1.2in]{geometry}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage{enumitem}
+
+\newcommand{\yv}{\mathbf{y}}
+\newcommand{\Cm}{\mathbf{C}}
+\newcommand{\Dm}{\mathbf{D}}
+\newcommand{\Idm}{\mathbf{I}}
+\newcommand{\Km}{\mathbf{K}}
+\newcommand{\Wm}{\mathbf{W}}
+\newcommand{\one}{\mathbf{1}}
+\newcommand{\thetav}{\boldsymbol{\theta}}
+\newcommand{\E}{\mathbb{E}}
+
+\pagestyle{empty}
+\setlength{\parskip}{2pt}
+
+\begin{document}
+
+\begin{center}
+{\large\bfseries The three hypotheses: BM1, OU1, OUx}\\[2pt]
+{\footnotesize\texttt{sparseou} --- one gene, one tree, regimes supplied}
+\end{center}
+\vspace{4pt}
+
+\section*{Setup}
+
+A rooted \textbf{ultrametric} tree, $n$ tips, height $H$. One gene's tip values are
+$\yv \in \mathbb{R}^{n}$. The supplied regime painting gives $r(u) \in \{1,\dots,K\}$, the regime on
+the branch at time $u$. Two matrices are fixed by the tree alone:
+\[
+D_{ij} \;=\; 2\bigl(H - t_{\mathrm{mrca}(i,j)}\bigr) \quad\text{(patristic distance)},
+\qquad
+C_{ij} \;=\; t_{\mathrm{mrca}(i,j)} \quad\text{(shared path length)} .
+\]
+Write $\Km(\alpha)$ for the elementwise exponential
+\[
+\bigl[\Km(\alpha)\bigr]_{ij} \;=\; e^{-\alpha D_{ij}} ,
+\]
+which is \emph{not} a matrix exponential. All three hypotheses are multivariate normal over the
+tips and differ only in the \textbf{mean}.
+
+\vspace{6pt}
+\hrule
+\vspace{8pt}
+
+\section*{BM1 --- neutral drift}
+
+Brownian motion started at $\theta_{\mathrm{bm}}$, no pull towards anything; variance accumulates
+with shared ancestry.
+\begin{equation*}
+\boxed{\;
+\yv \;\sim\; \mathcal{N}_{n}\!\left(\theta_{\mathrm{bm}}\,\one_{n},\;\;
+   \sigma_{\mathrm{bm}}^{2}\,\Cm \;+\; \tau^{2}\,\Idm\right)
+\;}
+\end{equation*}
+Free parameters: $\theta_{\mathrm{bm}}$ (root state), $\sigma_{\mathrm{bm}}$ (drift rate),
+$\tau$ (measurement error).
+
+\vspace{8pt}
+
+\section*{OU1 --- one global optimum}
+
+An Ornstein--Uhlenbeck process
+\[
+dX(t) \;=\; \alpha\bigl(\theta - X(t)\bigr)\,dt \;+\; \sigma\,dW(t),
+\]
+with the root drawn from its stationary distribution about $\theta$. Being stationary, the mean is
+$\theta$ at every tip and the covariance depends on the tips only through patristic distance.
+\begin{equation*}
+\boxed{\;
+\yv \;\sim\; \mathcal{N}_{n}\!\left(\theta\,\one_{n},\;\;
+   s^{2}\,\Km(\alpha) \;+\; \tau^{2}\,\Idm\right)
+\;}
+\end{equation*}
+Free parameters: $\theta$ (the optimum), $\alpha$ (selection strength), $s$ (stationary spread),
+$\tau$. The scale is the \emph{stationary} standard deviation $s^{2} = \sigma^{2}/(2\alpha)$, which
+is comparable across values of $\alpha$; recover $\sigma = s\sqrt{2\alpha}$.
+
+\vspace{8pt}
+
+\section*{OUx --- one optimum per regime}
+
+The same process, but the optimum is piecewise constant along the tree,
+$\theta(u) = \theta_{r(u)}$. Only the mean changes.
+\begin{equation*}
+\boxed{\;
+\yv \;\sim\; \mathcal{N}_{n}\!\left(\Wm(\alpha)\,\thetav,\;\;
+   s^{2}\,\Km(\alpha) \;+\; \tau^{2}\,\Idm\right),
+\qquad \thetav \in \mathbb{R}^{K}
+\;}
+\end{equation*}
+
+\noindent
+$\Wm(\alpha)$ is the \textbf{exposure matrix}. Let $\mathcal{P}(i)$ decompose tip $i$'s root-to-tip
+path into maximal segments $(k,a,b)$: regime $k$ occupying the time interval $[a,b]$. Then
+\begin{equation*}
+\E[y_i] \;=\; \underbrace{e^{-\alpha H}\,\theta_{r(0)}}_{\text{root}}
+   \;+\!\! \sum_{(k,a,b)\,\in\,\mathcal{P}(i)}\!\! \theta_{k}
+   \left(e^{-\alpha(H-b)} - e^{-\alpha(H-a)}\right)
+   \;=\; \bigl[\Wm(\alpha)\thetav\bigr]_{i} .
+\end{equation*}
+Each row records how much of that tip's ancestry sits in each regime, discounted by how quickly the
+process forgets. The segment terms telescope to $1 - e^{-\alpha H}$ and the root term supplies the
+rest, so $\Wm$ is \textbf{row-stochastic}: $\sum_{k} W_{ik} = 1$, and the tip mean is a genuine
+weighted average of the optima.
+
+\vspace{8pt}
+\hrule
+\vspace{8pt}
+
+\section*{Relationships}
+
+\begin{itemize}[leftmargin=1.3em]
+\item $\mathrm{OU1}$ is $\mathrm{OUx}$ with every $\theta_k$ equal: an \emph{interior} restriction, nothing
+  degenerates.
+\item $\mathrm{BM1}$ is the $\alpha \to 0$ limit --- but only after the diverging common term
+  $\sigma^{2}/(2\alpha)$ is absorbed by the free mean, since
+  $s^{2}\Km(\alpha) \to \bigl[\tfrac{\sigma^{2}}{2\alpha} - \sigma^{2}H\bigr]\one\one^{\!\top}
+  + \sigma^{2}\Cm$. The approach is numerically singular: $\Km(\alpha) \to \one\one^{\!\top}$, which
+  has rank one. With a \emph{fixed} rather than stationary root the limit is clean,
+  $\Km \to \Cm$, with no divergence.
+\item Counting free parameters: $\mathrm{BM1}$ has $3$, $\mathrm{OU1}$ has $4$, $\mathrm{OUx}$ has
+  $3 + K$.
+\end{itemize}
+
+\end{document}

@@ -143,6 +143,89 @@ def detect_adaptive(adata, genes=None, regimes=None, n_regimes=None, dispersion=
     return adata
 
 
+def detect_modes(adata, genes=None, alpha_grid=None, tau_grid=None, min_leaves=8,
+                 omega=1.0, n_iter=2000, burn=500, seed=0, evidence_only=False,
+                 rho=0.1, key="modes"):
+    """Hierarchical Bayesian mode detection: **where** on the tree adaptation happened, and **which
+    genes** responded.
+
+    :func:`detect_adaptive` asks, gene by gene, which of BM / OU / OUx fits best given a regime
+    partition you supply. That has a hard information floor -- a gene whose individual evidence is
+    weak gets a confident answer barely better than chance on a small tree -- and it cannot tell you
+    *where* an event was, only whether a partition you already drew explains the data.
+
+    This shares structure across genes instead. Adaptive events are latent and live on branches, so
+    many genes each carrying weak evidence can localise the same event, while a per-gene indicator
+    decides which genes actually respond::
+
+        z_b      ~ Bernoulli(pi)                            which BRANCHES carry an event
+        g_bg|z_b ~ Bernoulli(z_b * rho)                     which GENES respond to it
+        d_bg|g   ~ N(0, omega^2 sigma_g^2)  if g_bg else 0  the optimum shift
+
+    Stores in ``uns[key]``: ``p_z`` (posterior P(event on branch)), ``p_gamma`` (branches x genes,
+    P(gene responds)), ``evidence`` (the graded no-MCMC branch scan), ``genes``, ``leaf_names``,
+    and -- the interpretable identifier for a branch -- ``clades``, the list of leaf names below
+    each one, with ``clade_sizes``. ``branches`` holds internal node indices of a tree built here
+    from ``uns['tree']``; those indices mean nothing outside this call, so identify a branch by its
+    clade, not by its index.
+
+    Parameters
+    ----------
+    evidence_only
+        Skip the sampler and return only ``evidence``, the collapsed branch scan
+        ``sum_g log[(1-rho) + rho BF_bg]`` profiled over the ``(alpha, tau)`` grid. Much cheaper,
+        and the more useful read-out at small effect sizes, where ``p_z`` is sharply thresholded by
+        the sparsity prior and reports ~0 for everything.
+
+    Notes
+    -----
+    **This read-out pseudobulks.** The model is Gaussian with one value per tip, so cells are
+    averaged (log1p, size-factor normalised) to their leaf -- unlike the count read-outs elsewhere
+    in ``tl``, which keep cells as subclonal replicates. On a single-cell tree, where each leaf is
+    one cell, nothing is lost. On a subclone tree it discards the within-leaf variation, and the
+    count observation layer for this model is not built yet.
+    """
+    from ..modes import to_array_tree, fit_model1, branch_evidence, candidate_branches
+
+    tree, leaves, idx, sf = _ctx(adata)
+    genes = list(adata.var_names) if genes is None else list(genes)
+    at, leaf_names = to_array_tree(tree)
+
+    # cells -> one value per tip, in the array tree's leaf order
+    pos = {n: i for i, n in enumerate(leaf_names)}
+    Y = np.zeros((at.n_leaves, len(genes)))
+    counts = np.zeros(at.n_leaves)
+    lab = np.asarray(adata.obs[adata.uns["_species_obs"]]).astype(str)
+    M = np.column_stack([np.log1p(_gene_counts(adata, g) / np.maximum(sf, 1e-12)) for g in genes])
+    for c in range(M.shape[0]):
+        i = pos.get(lab[c])
+        if i is not None:
+            Y[i] += M[c]; counts[i] += 1
+    Y /= np.maximum(counts, 1)[:, None]
+    Y = (Y - Y.mean(0)) / (Y.std(0) + 1e-9)
+
+    if alpha_grid is None:
+        alpha_grid = np.exp(np.linspace(np.log(0.5), np.log(8.0), 8))
+    if tau_grid is None:
+        tau_grid = np.array([0.02, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2])
+    br = candidate_branches(at, min_leaves)
+
+    _, ev = branch_evidence(Y, at, branches=br, alpha_grid=alpha_grid, tau_grid=tau_grid,
+                            omega=omega, rho=rho, standardize=False)
+    sets = at.leaf_sets()
+    clades = [[at.name[at.leaves[i]] for i in sets[int(b)]] for b in br]
+    out = dict(branches=np.asarray(br), evidence=np.asarray(ev),
+               clades=clades, clade_sizes=np.array([len(c) for c in clades]),
+               genes=genes, leaf_names=leaf_names)
+    if not evidence_only:
+        res = fit_model1(Y, at, branches=br, alpha_grid=alpha_grid, tau_grid=tau_grid,
+                         omega=omega, n_iter=n_iter, burn=burn, seed=seed, standardize=False)
+        out.update(p_z=res.p_z, p_gamma=res.p_gamma, delta_mean=res.delta_mean,
+                   alpha_draws=res.alpha_draws, tau_draws=res.tau_draws,
+                   n_event_draws=res.n_event_draws, diagnostics=res.diagnostics)
+    adata.uns[key] = out
+    return adata
+
 def plasticity(adata, genes, dispersion=10.0):
     """Heritable vs within-clone plastic variance per gene (the subclonal replicates at work).
 

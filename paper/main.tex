@@ -1,0 +1,324 @@
+% !TEX root = main.tex
+% scPhyTr --- ICML-style methods paper (DRAFT scaffold).
+% Self-contained preamble so it compiles with `tectonic main.tex` out of the box.
+% To submit to ICML: replace the geometry/font block below with the official
+% \usepackage{icml2025} style file and \twocolumn layout.
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{microtype}
+\usepackage{natbib}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,allcolors=blue]{hyperref}
+\usepackage[capitalize]{cleveref}
+
+\newtheorem{proposition}{Proposition}
+\newtheorem{lemma}{Lemma}
+\newtheorem{definition}{Definition}
+
+\newcommand{\scphytr}{\textsc{scPhyTr}}
+\newcommand{\RR}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\N}{\mathcal{N}}
+\newcommand{\KK}{K}
+\newcommand{\bigO}{\mathcal{O}}
+
+\title{\bf Exact, Linear-Time Inference for Latent Gaussian Evolutionary
+Models on Single-Cell Phylogenies}
+\author{\textit{(author list)}}
+\date{Draft --- \today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Single-cell lineage tracing now reconstructs a phylogeny over the individual cells of a
+growing tissue or tumour and profiles each cell's transcriptome, raising a statistical
+question of how gene expression \emph{evolves} along a cellular genealogy: how heritable a
+program is, whether it is under selection, which genes co-evolve, and where the tempo of
+evolution shifts. We cast this as inference in a \emph{latent Gaussian model on a tree}: a
+Brownian-motion or Ornstein--Uhlenbeck process places a latent state at every node, observed
+at the leaves through an explicit (Poisson / negative-binomial) count likelihood. The joint
+law is a Gaussian Markov random field whose precision inherits the tree's sparsity, which we
+exploit for a \emph{sparsity-preserving Laplace} inference that evaluates the marginal
+likelihood and its exact gradients in time \emph{linear} in the number of cells---exact when
+the observation is Gaussian, and tight for log-concave count decoders---scaling to the gene
+dimension through a low-rank phylogenetic factor model in $\bigO(nk^3)$. This yields an
+exact-marginal, maximum-likelihood alternative to the amortized variational tree models and
+to the dense $\bigO(n^3)$ likelihoods of classical phylogenetic comparative methods, and a
+calibrated penalized-likelihood search for evolutionary \emph{rate shifts} that matches the
+discoveries of reversible-jump MCMC roughly two orders of magnitude faster. On ground-truth
+simulations and on real lineage-tracing data, \scphytr{} recovers heritability, deconfounded
+gene--gene co-evolution, and clade-specific rate shifts where autocorrelation- and
+graph-based baselines are confounded by shared ancestry.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+CRISPR-based lineage tracing records, in an evolving population of cells, a heritable barcode
+that is read out alongside single-cell RNA sequencing, so that one obtains both a
+reconstructed \emph{phylogeny} over thousands of cells and each cell's expression profile.
+This makes it possible, for the first time at single-cell resolution, to ask the questions
+that phylogenetic comparative methods (PCMs) ask of species: is a trait \emph{heritable}
+along the genealogy or rapidly \emph{plastic}; is it under \emph{stabilizing or directional
+selection}; which traits \emph{co-evolve}; and does the \emph{rate} of evolution accelerate
+in particular subclones? Existing tools answer one of these at a time and with mismatched
+assumptions---phylogenetic autocorrelation for heritability, dense Gaussian-on-log PCM for
+selection, graph autocorrelation for modules, reversible-jump MCMC for rate shifts---and most
+treat normalized expression as a Gaussian trait, which fails at the sparse depths typical of
+single-cell data.
+
+We give a single generative model and an inference engine that produce all of these read-outs
+from one fit. The model is a latent BM/OU process on the tree observed through a count
+likelihood (\Cref{sec:model}); the engine exploits the tree-induced sparsity of the latent
+precision to compute the marginal likelihood and its gradients exactly and in linear time
+(\Cref{sec:inference}). Our contributions are:
+\begin{itemize}
+  \item \textbf{Linear-time exact inference for latent Gaussian tree models with non-conjugate
+  observations.} A sparsity-preserving Laplace approximation evaluates the marginal in
+  $\bigO(np^3)$ ($\bigO(n)$ univariate), exact when the decoder is Gaussian, with exact
+  gradients and an EM whose E-step is a Rauch--Tung--Striebel tree smoother
+  (\Cref{sec:inference}). This is an exact-MLE counterpart to amortized variational tree
+  models and to dense $\bigO(n^3)$ PCM.
+  \item \textbf{Scalability to the transcriptome} through a low-rank Poisson phylogenetic
+  factor model, $K=WW^\top$, fit by Laplace-EM in $\bigO(nk^3)$, recovering the deconfounded
+  gene--gene evolutionary correlation matrix without forming the $p\times p$ object
+  (\Cref{sec:estimation}).
+  \item \textbf{A calibrated penalized-likelihood search for clade-specific rate shifts}
+  (\Cref{sec:estimation}), the maximum-penalized-likelihood counterpart to RevBayes'
+  reversible-jump MCMC, with a selection-bias correction that controls the null false-positive
+  rate.
+  \item \textbf{Empirical evidence} (\Cref{sec:experiments}) that, on ground-truth
+  simulations and real lineage-tracing data, these read-outs are recovered where PATH,
+  Hotspot, EvoGeneX and RevBayes are confounded, mis-calibrated, or orders of magnitude
+  slower.
+\end{itemize}
+
+\section{Model: a latent Gaussian process on the tree}
+\label{sec:model}
+
+Let $T$ be a rooted tree with nodes $u$ and leaf set $\mathcal L$ (the profiled cells). For
+$p$ genes, a latent state $z_u\in\RR^p$ (interpreted as log-expression) evolves along edges.
+Under \emph{Brownian motion} with diffusion matrix $K\succ 0$, an edge of length $t$ adds an
+independent Gaussian increment,
+\begin{equation}
+z_{\text{child}}\mid z_{\text{parent}} \sim \N\!\big(z_{\text{parent}},\; t\,K\big),
+\label{eq:bm}
+\end{equation}
+so the diagonal of $K$ is the per-gene rate and its off-diagonal the gene--gene evolutionary
+covariance. The \emph{Ornstein--Uhlenbeck} process adds a pull toward an optimum $\theta$,
+$\mathrm dz=-\alpha(z-\theta)\,\mathrm ds+K^{1/2}\mathrm dW$, integrating over an edge to a
+linear-Gaussian transition with contraction $\phi=e^{-\alpha t}$ and variance factor
+$v(t)=(1-e^{-2\alpha t})/(2\alpha)$; clade-specific optima or rates are encoded by painting
+\emph{regimes} on the tree.
+
+\paragraph{Observation model.} The leaf latent is observed through a likelihood that
+factorizes across entries given $z$,
+\begin{equation}
+Y_{ig}\mid z_{ig} \sim p(\cdot\mid z_{ig}),\qquad
+i\in\mathcal L,\; g\in[p],
+\end{equation}
+with \scphytr{} implementing a Poisson model $Y\sim\mathrm{Poisson}(S\,e^{z})$ with per-cell
+size factors $S$, a negative-binomial extension for within-clone overdispersion, and a
+Gaussian model for directly measured traits. Crucially, \emph{all evolutionary parameters live
+in the latent prior and none in the observation model}, so any observation type reuses the
+same inference engine and the estimated $K$ is a property of evolution, not of measurement
+noise.
+
+\paragraph{The joint law is a GMRF.} Stacking the latents of all $N$ nodes, the prior is
+$\N(Z;m,Q^{-1})$ with precision $Q=A\otimes K^{-1}$, where $A$ is the tree's (sparse)
+structure matrix---nonzero only on the diagonal and parent--child pairs. The posterior is
+\begin{equation}
+p(Z\mid Y)\;\propto\;\exp\!\Big\{\ell(F)-\tfrac12 (Z-m)^\top Q (Z-m)\Big\},
+\label{eq:posterior}
+\end{equation}
+with $F=Z_{\mathcal L}$ and $\ell$ the decoder log-likelihood. Two facts drive everything
+below: $\ell$ is concave for log-link Poisson/Gaussian (so \eqref{eq:posterior} is unimodal),
+and the posterior precision $Q+W$ with $W=-\nabla^2\ell$ block-diagonal over leaves
+\emph{preserves the tree sparsity}.
+
+\section{Linear-time exact inference}
+\label{sec:inference}
+
+\subsection{Gaussian observations: exact pruning}
+When the decoder is Gaussian the latents can be integrated out in closed form. Rather than
+forming the dense $N\!\times\!N$ covariance (an $\bigO(n^3)$ operation), \scphytr{} evaluates
+the marginal by Felsenstein's pruning---a single post-order pass fusing children---which is
+exactly Gaussian elimination on the sparse precision \eqref{eq:posterior}.
+
+\begin{proposition}[Exactness and cost of pruning]
+\label{prop:pruning}
+For a Gaussian (or directly observed) trait, the pruning recursion returns the exact marginal
+log-likelihood $\log p(Y\mid\eta)$ of the BM/OU model in $\bigO(n)$ time for a single trait
+and $\bigO(np^3)$ for $p$ correlated traits, where the $p^3$ is one Cholesky factorization of
+$K$ per node and introduces no fill-in.
+\end{proposition}
+
+\subsection{Non-conjugate observations: a sparsity-preserving Laplace approximation}
+For count decoders the posterior \eqref{eq:posterior} is non-Gaussian but log-concave. We
+approximate it by the Gaussian matching its mode and curvature. The mode $\hat Z=\arg\min\Psi$,
+$\Psi(Z)=-\ell(F)+\tfrac12(Z-m)^\top Q(Z-m)$, is found by Newton's method, each step solving
+\begin{equation}
+(Q+W)\,\delta = -\nabla\Psi,\qquad \nabla\Psi=Q(Z-m)-\nabla\ell,
+\end{equation}
+by tree (block) Gaussian elimination, and the Laplace marginal is the Gaussian-at-the-mode
+value.
+
+\begin{proposition}[Sparsity preservation and cost]
+\label{prop:laplace}
+Because $W=-\nabla^2\ell$ is block-diagonal over leaves, the Hessian $H=Q+W$ has the same
+tree sparsity as $Q$; its Cholesky factorization in leaves-to-root order introduces no
+fill-in, so the Laplace marginal, its gradient, and the posterior edge moments (via a
+Rauch--Tung--Striebel smoother reusing the elimination factors) all cost $\bigO(np^3)$
+($\bigO(n)$ univariate). The approximation is exact when $\ell$ is Gaussian and its error is
+governed by the third derivative of $\ell$ at the mode.
+\end{proposition}
+
+The Laplace step is the default E-step; importance sampling and Hamiltonian Monte Carlo serve
+as certificates and fallbacks when the posterior is far from Gaussian (\Cref{app:engines}).
+
+\subsection{Scaling to many genes: a low-rank factor decoder}
+The full $K$ is $\bigO(p^2)$ and the dense estimator $\bigO(p^3)$. \scphytr{} parameterizes
+$K$ in low rank: $k$ latent factors $x_u\in\RR^k$ evolve as independent BM on the tree and
+load onto genes, $\eta_{i}=\mu+Wx_i$, $Y_i\sim\mathrm{Poisson}(S_i e^{\eta_i})$, so
+$K=WW^\top$. A single factor influences every gene, so the per-leaf curvature is a full
+$k\times k$ block $W^\top\!\operatorname{diag}(S_ie^{\eta_i})W\succeq 0$ rather than diagonal;
+this is the \emph{only} change the engine needs, and it leaves \Cref{prop:laplace} intact with
+cost $\bigO(nk^3)$.
+
+\section{Estimation and structure search}
+\label{sec:estimation}
+
+With the latents integrated out, evolutionary parameters are estimated by maximizing the
+(exact or Laplace) marginal: closed form for $K$ when traits are directly observed, otherwise
+direct optimization over $(\alpha,\sigma^2,\theta)$, or Expectation--Maximization when extra
+latents (factor scores, NB dispersion) are present---an RTS-smoother E-step and a JAX-gradient
+M-step. The shared engine specializes per task; one read-out is the exception.
+
+\paragraph{Heritability (Pagel's $\lambda$): the dense exception.} Phylogenetic signal is read
+by Pagel's $\lambda$, scaling the off-diagonals of the tip covariance by $\lambda\in[0,1]$
+($\lambda{=}1$ full tree, $\lambda{=}0$ i.i.d.\ tips). Scaling \emph{only} the off-diagonals
+yields a matrix that is no longer the covariance of a BM on the tree, so it loses the
+tree-Markov sparsity and is estimated by a dense $\bigO(n^3)$ factorization---the lone
+read-out that leaves the linear-time regime.
+
+\paragraph{Clade-specific rate shifts.} For multi-rate BM (the diffusion rate $\sigma^2$ shifts
+between painted regimes), given regimes the per-regime rates are fit by the same linear-time
+pruning of \Cref{prop:pruning}. When the shifts are unknown they are found \emph{de novo} by
+greedy forward selection: add the branch whose rate shift most improves a penalized criterion,
+each candidate scored by its $\bigO(n)$ marginal.
+
+\begin{proposition}[Calibration of the de-novo search]
+\label{prop:calibration}
+Selecting the best of $m$ candidate branches biases the maximum BIC improvement upward; adding
+a location penalty of $2\log m$ per shift corrects this selection bias. Empirically it reduces
+the false-positive rate on homogeneous-rate null trees from $50\%$ to $0\%$ while retaining
+power (\Cref{sec:experiments}).
+\end{proposition}
+
+This is the maximum-penalized-likelihood counterpart to the reversible-jump MCMC of RevBayes:
+it returns one configuration in seconds rather than a posterior in minutes.
+
+\section{Experiments}
+\label{sec:experiments}
+
+We compare \scphytr{} to PATH (Moran's $I$ autocorrelation), Hotspot (graph autocorrelation),
+EvoGeneX (replicate-aware Gaussian OU), and RevBayes (reversible-jump rate shifts), on
+ground-truth simulations and on real KP-Tracer and melanoma-subline lineage-tracing data.
+\Cref{tab:results} summarizes the headline results; full protocols are in \Cref{app:experiments}.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Task / regime & \scphytr{} & baseline \\
+\midrule
+Heritability AUROC, depth $1$ & $0.82$ & EvoGeneX $0.66$, PATH $0.65$ \\
+Co-evolution false-positive rate & $0.4\%$ & PATH $96\%$, Hotspot $73\%$ \\
+PFA module recovery, $p{=}8000$ & AUROC $1.0$, ${\sim}15$s & dense $K$ infeasible \\
+Rate shift localize ($16\times$) & $100\%$ & RevBayes $75\%$ \\
+Rate magnitude ($16\times$ true) & $17\times$ & RevBayes $3.6\times$ \\
+Rate-shift runtime / dataset & ${\sim}1$s & RevBayes ${\sim}85$s \\
+Null rate-shift FPR & $0\%$ & --- \\
+\bottomrule
+\end{tabular}
+\caption{Headline benchmark results. Simulations use planted ground truth; depth is mean
+counts/cell. Source scripts in \texttt{analysis/benchmark/}.}
+\label{tab:results}
+\end{table}
+
+\paragraph{Heritability and the count model.} On simulations sweeping sequencing depth, the
+count model retains power to detect heritable expression where Gaussian-on-log methods lose it
+(AUROC $0.82$ vs $0.65$--$0.66$ at depth $1$; all converge at deep coverage). On real
+lineage-tracing data \scphytr{}'s $\lambda$ reproduces PATH's Moran's $I$ ranking.
+
+\paragraph{Co-evolution without tree confounding.} With a planted low-rank $K$ on real tumour
+trees, \scphytr{}'s deconfounded estimate holds the false co-evolution rate among
+evolutionarily independent genes at $0.4\%$ at full power, while PATH's cross-correlation
+($96\%$) and Hotspot ($73\%$) manufacture co-evolution from shared ancestry. The factor model
+recovers the planted module to $p=8000$ genes in seconds where the dense $p\times p$ estimate
+is rank-deficient and infeasible.
+
+\paragraph{Rate shifts vs reversible-jump MCMC.} On trees with a known rate shift, \scphytr{}
+localizes large shifts more often than RevBayes' highest-posterior branch and recovers the
+rate magnitude near-unbiased, whereas the reversible-jump posterior shrinks it toward the null;
+\scphytr{} runs ${\sim}100\times$ faster. The de-novo search is calibrated
+(\Cref{prop:calibration}).
+
+\section{Related work}
+\label{sec:related}
+
+\scphytr{} sits between three camps. \emph{Neural tree models} (TreeVAE, LORACs, VOUS) place a
+Gaussian random walk on a (often latent) tree and decode with a neural network trained by
+amortized variational inference; we keep a log-linear decoder in exchange for an exact marginal,
+exact gradients, and interpretable evolutionary parameters. \emph{Phylogenetic comparative
+methods} (EvoGeneX, CAGEE) fit the same BM/OU models but to bulk/pseudobulk expression, one
+gene at a time, with dense $\bigO(n^3)$ likelihoods; \scphytr{} lifts this to single-cell
+resolution, count-based and multivariate, in linear time. \emph{Moment- and graph-statistics}
+(PATH, Hotspot) summarize the tree rather than model it, and are confounded by shared ancestry
+in exactly the co-evolution regime our deconfounded $K$ targets. \emph{RevBayes} is the
+Bayesian end of the PCM axis, fitting rate shifts by reversible-jump MCMC; \scphytr{} trades the
+posterior for a calibrated, linear-time penalized-likelihood estimate. Connections to INLA,
+Gaussian-process classification, and Kalman/RTS smoothing are detailed in \Cref{app:related}.
+
+\section{Conclusion}
+\scphytr{} casts the study of expression evolution on single-cell phylogenies as inference in a
+latent Gaussian tree model with a count decoder, and shows that the tree's sparsity yields an
+exact, linear-time marginal likelihood that subsumes the read-outs of specialized tools in one
+calibrated, interpretable model. Limitations and extensions---small-tree regularization of
+$\lambda$, a count-model de-novo search, and proliferation dynamics---are discussed in
+\Cref{app:limitations}.
+
+\appendix
+\section{Inference engines: importance sampling and HMC}
+\label{app:engines}
+\emph{(To import from \texttt{docs/02\_inference\_engines.md}: the FFBS simulation smoother,
+the self-normalized importance-sampling weights and marginal estimator, and the NUTS target;
+plus the head-to-head agreement of the three engines.)}
+
+\section{Experimental protocols}
+\label{app:experiments}
+\emph{(Datasets, simulation generators, baseline configurations, and full tables; source in
+\texttt{analysis/benchmark/}.)}
+
+\section{Related work, extended}
+\label{app:related}
+\emph{(INLA / latent Gaussian models; GP classification Laplace; Kalman/RTS; PATH/PATHpro,
+EvoGeneX/CAGEE, Hotspot/PhyloVision, TreeVAE/LORACs/VOUS, RevBayes.)}
+
+\section{Limitations}
+\label{app:limitations}
+\emph{(Laplace error for very sparse genes; small-tree $\lambda$ overfitting and a bootstrap
+fix; de-novo rate shifts currently on the Gaussian path; tree taken as given.)}
+
+\bibliographystyle{plainnat}
+\bibliography{../manuscript/references}
+
+\end{document}
