@@ -28,24 +28,36 @@ __all__ = ["paint_regimes", "regime_design", "fit_models", "classify_genes", "MO
 MODELS = ("BM1", "OU1", "OUX")
 
 
-def paint_regimes(tree, leaf_regime):
+def paint_regimes(tree, leaf_regime, mixed="root"):
     """Assign a regime to every node from leaf labels by simple parsimony-style downward painting.
 
     SCOUT uses ape::ace (equal-rates Mk, max-likelihood state). We use the cheaper deterministic
-    rule: a node takes the unique regime of its descendant leaves when they agree, else the root
-    regime. On the simulated trees here (clades are regime-coherent by construction) this coincides
-    with the ML painting; swap in a proper Mk reconstruction for real data.
+    rule: a node takes the unique regime of its descendant leaves when they agree, else whatever
+    ``mixed`` says. On the simulated trees here (clades are regime-coherent by construction) this
+    coincides with the ML painting; swap in a proper Mk reconstruction for real data.
+
+    Parameters
+    ----------
+    mixed : what a node whose descendant leaves span more than one regime receives.
+        ``"root"`` (the default, and what every model fit wants) gives it the root regime, so the
+        painting covers every branch. ``None`` codes it ``-1`` instead, which is what a *plot*
+        wants: the branch above a regime split belongs to no regime and should not be drawn as
+        though it did.
+
+    Returns ``(node_regime, uniq)`` -- integer codes per node, and the regime labels they index.
     """
+    if mixed not in ("root", None):
+        raise ValueError(f"mixed must be 'root' or None, got {mixed!r}")
     leaf_regime = np.asarray(leaf_regime)
     uniq = list(dict.fromkeys(leaf_regime.tolist()))
     code = {r: i for i, r in enumerate(uniq)}
     sets = tree.leaf_sets()
     node_regime = np.zeros(tree.n_nodes, dtype=int)
     root_rs = {code[r] for r in leaf_regime[sets[0]]}
-    root_code = min(root_rs)
+    fill = min(root_rs) if mixed == "root" else -1
     for v in range(tree.n_nodes):
         rs = {code[r] for r in leaf_regime[sets[v]]}
-        node_regime[v] = rs.pop() if len(rs) == 1 else root_code
+        node_regime[v] = rs.pop() if len(rs) == 1 else fill
     return node_regime, uniq
 
 

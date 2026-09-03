@@ -47,6 +47,8 @@ ph.tl.covariate_rate_shifts(adata, obs="niche")          # state-dependent rates
 # --- plotting ---
 ph.pl.rate_tree(adata)                        # the tree, clades coloured by their fitted rate (shifts starred)
 ph.pl.plot_tree(adata, color="Mki67")         # the tree, leaves coloured by a gene / obs column
+ph.pl.plot_tree(tree, regimes=leaf_regime)    # the tree, branches painted by the regime they sit in
+ph.pl.expression_tree(adata, ["Mki67", "Sox2", "cell_type"])   # one colour strip per gene / obs column
 ph.pl.matrix(adata, "K_corr")                 # heatmap of the evolutionary correlation
 ph.pl.loadings(adata)                         # phylogenetic-factor-analysis gene loadings
 ph.pl.variance_decomposition(adata)           # heritable–niche plane (the deconfounded replacement for the PEtracer scatter)
@@ -66,6 +68,12 @@ independently. Per-gene model selection has a hard information floor (SCOUT repo
 at 32 leaves) and cannot say *where* an event happened. `detect_modes` puts latent adaptive events on
 branches, shared across genes, with a sparse per-gene indicator for which genes respond — so many genes
 each carrying weak evidence localise the same event. See `docs/06_mode_detection.md`.
+
+**Reading a tree.** `pl.plot_tree(..., regimes=...)` paints each branch with the regime of the tips
+below it, leaving branches above a regime split grey rather than attributing them to one side;
+`pl.expression_tree` puts one colour strip per gene or `obs` column beside the tips, so several
+variables can be read against the topology and against each other. The strips are drawn by
+`cassiopeia` (an optional dependency). See `docs/07_plotting_trees.md`.
 
 **Status.** Implemented and validated: the above `pp` / `tl` / `pl` calls and the simulators, backed by the
 linear-time exact-marginal `Laplace` inference (sparse, warm-started; scales to 10³–10⁴-cell trees). The

@@ -75,6 +75,10 @@ m["p_gamma"][order[0]] > .5  # which genes respond to it
 Identify a branch by its **clade**, never by its index: `detect_modes` builds its own tree
 internally and those indices mean nothing outside the call.
 
+To look at a supplied regime landscape rather than a discovered one — which branches a painting
+covers, and which sit above a split and so belong to no regime — see
+[regime paintings](07_plotting_trees.md).
+
 `evidence_only=True` skips the sampler and returns just the graded branch scan. That is much cheaper
 and is the more useful read-out at small effect sizes, where `p_z` is sharply thresholded by the
 sparsity prior and reports ~0 for everything.

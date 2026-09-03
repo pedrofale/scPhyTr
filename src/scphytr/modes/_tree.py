@@ -89,6 +89,21 @@ class Tree:
         self.depth = d
         return self
 
+    def to_newick(self, precision=6):
+        """Newick text for this tree, round-tripping with :meth:`from_newick`.
+
+        Written iteratively rather than recursively so a deep unbalanced tree cannot exhaust the
+        interpreter's stack. Internal node names are kept -- they are what lets a caller line a
+        painting or a per-branch value back up with the tree.
+        """
+        parts = [None] * self.n_nodes
+        for v in self.postorder:
+            kids = self.children[v]
+            inner = "(" + ",".join(parts[c] for c in kids) + ")" if kids else ""
+            parts[v] = f"{inner}{self.name[v] or ''}:{self.dist[v]:.{precision}g}"
+        root = int(np.flatnonzero(self.parent < 0)[0])
+        return parts[root] + ";"
+
     def leaf_sets(self):
         """For every node, the array of LEAF-ORDER indices beneath it (postorder accumulation)."""
         pos = {int(l): i for i, l in enumerate(self.leaves)}
