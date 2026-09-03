@@ -1,0 +1,446 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage{fancyvrb}
+\usepackage{hyperref}
+
+\newtheorem{proposition}{Proposition}
+\newtheorem{corollary}[proposition]{Corollary}
+\theoremstyle{remark}
+\newtheorem{remark}[proposition]{Remark}
+
+\newcommand{\Norm}{\mathcal{N}}
+\newcommand{\one}{\mathbf{1}}
+\newcommand{\Rb}{\mathbb{R}}
+
+\title{Single-gene Brownian motion on a lineage tree\\
+\large The scBEM validation brick: model, pruning likelihood, and identifiability}
+\author{scPhyTr}
+\date{3 September 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note fixes the mathematics for the first scBEM component: one gene evolving under Brownian
+motion on a fixed single-cell lineage tree, observed at the tips with independent noise. We give the
+induced tip distribution, marginalise the ancestral state in closed form, derive the linear-time
+pruning likelihood and prove it identical to the dense multivariate normal, and settle the
+identifiability of the diffusion rate against the tip-noise variance. Two propositions and one
+eigenvalue result explain precisely why the two variance components are correlated but not
+degenerate, and how that depends on the shape of the tree. All numerical claims have been verified
+on the two trees used as fixtures.
+\end{abstract}
+
+\section{Setup}
+
+Let $T$ be a rooted tree with $n$ tips indexed $1,\dots,n$, internal nodes $n{+}1,\dots,2n{-}1$
+(after collapsing unary chains and binarising polytomies with zero-length edges, so that $T$ is
+strictly binary), root $r$, and branch length $b_u > 0$ above node $u$. Write $p(u)$ for the parent
+of $u$, $d_u$ for the root-to-$u$ path length, and $\mathrm{mrca}(i,j)$ for the most recent common
+ancestor of tips $i$ and $j$.
+
+A single gene takes a latent value $x_u \in \Rb$ at every node. We observe only the tips, and only
+through noise.
+
+\section{The generative model and the induced tip distribution}
+
+\paragraph{Brownian motion.} Conditional on its parent, each node's value is
+\begin{equation}
+  x_u \mid x_{p(u)} \;\sim\; \Norm\!\left(x_{p(u)},\; \sigma^2 b_u\right),
+  \label{eq:bm}
+\end{equation}
+independently across branches, with $\sigma^2 > 0$ the diffusion rate.
+
+\paragraph{Observation.} Tip $i$ is observed as
+\begin{equation}
+  y_i \mid x_i \;\sim\; \Norm\!\left(x_i,\; \tau^2\right),
+  \label{eq:obs}
+\end{equation}
+independently across tips. The term $\tau^2$ absorbs every source of tip variation that is not
+inherited: measurement and sampling noise, transcriptional bursting, and non-heritable cell state.
+It is the model-internal replacement for smoothing expression over the tree as a preprocessing step.
+
+\paragraph{Ancestral state.} The root is given a proper prior
+\begin{equation}
+  x_r \;\sim\; \Norm\!\left(m_0,\; v_0\right).
+  \label{eq:root}
+\end{equation}
+
+Because \eqref{eq:bm}--\eqref{eq:root} are jointly Gaussian and the tips are a linear functional of
+the latent field, the marginal is Gaussian and available in closed form.
+
+\begin{proposition}[Induced tip distribution]
+\label{prop:marginal}
+Let $C \in \Rb^{n \times n}$ be the Brownian covariance shape,
+\begin{equation}
+  C_{ij} \;=\; d_{\mathrm{mrca}(i,j)}, \qquad\text{so in particular}\qquad C_{ii} = d_i .
+  \label{eq:C}
+\end{equation}
+Then, marginally over all latent values including the root,
+\begin{equation}
+  y \;\sim\; \Norm\!\left(m_0 \one,\;\; \Sigma\right),
+  \qquad
+  \Sigma \;=\; \sigma^2 C \;+\; \tau^2 I \;+\; v_0\, \one\one^{\!\top}.
+  \label{eq:Sigma}
+\end{equation}
+\end{proposition}
+
+\begin{proof}
+Conditional on $x_r$, the value at tip $i$ is $x_r$ plus the sum of independent increments along the
+root-to-$i$ path, so $\operatorname{Cov}(x_i, x_j \mid x_r)$ is $\sigma^2$ times the length of the
+shared portion of the two paths, which is the root-to-$\mathrm{mrca}(i,j)$ path, giving $\sigma^2
+C_{ij}$. Adding \eqref{eq:obs} contributes $\tau^2 I$. Marginalising $x_r$ under \eqref{eq:root}
+adds $v_0$ to every entry, since every tip loads on $x_r$ with coefficient one.
+\end{proof}
+
+\begin{remark}
+The rank-one term $v_0 \one\one^{\!\top}$ is the part most easily dropped by accident.
+Marginalising the root does not merely remove a parameter; it correlates every pair of tips.
+A dense reference implementation that omits it will disagree with the pruning recursion of
+Section~\ref{sec:pruning} for reasons unrelated to pruning.
+\end{remark}
+
+\section{Reparameterisation}
+
+The pair $(\sigma^2, \tau^2)$ is a poor coordinate system for sampling, and $\sigma^2$ is not a
+reportable quantity: lineage-tracing branch lengths are expressed in recorder-edit units rather than
+time, so $\sigma^2$ absorbs the arbitrary scale of $C$ and is not comparable between trees. We
+therefore sample the total tip variance $V$ and the phylogenetic heritability $h$,
+\begin{equation}
+  \sigma^2 \;=\; \frac{V h}{\bar{T}}, \qquad
+  \tau^2   \;=\; V\,(1-h), \qquad
+  \bar{T} \;=\; \frac{1}{n}\sum_{i=1}^n d_i ,
+  \label{eq:reparam}
+\end{equation}
+with $V > 0$ and $h \in (0,1)$. Then $h$ is scale-free and is the quantity that transfers across
+datasets, while $V$ carries the units.
+
+\section{The pruning likelihood}
+\label{sec:pruning}
+
+Evaluating \eqref{eq:Sigma} directly costs $O(n^3)$ per likelihood evaluation. The tree makes the
+precision of the latent field sparse, and Felsenstein's pruning exploits this to compute the same
+number in $O(n)$ without ever forming $\Sigma$.
+
+\paragraph{Messages.} We propagate, for each node $u$, a mean $m_u$ and a variance $V_u$ expressed
+\emph{in units of $\sigma^2$}, representing the likelihood of the subtree below $u$ as a function of
+$x_u$, up to a constant already accumulated:
+\begin{equation}
+  L_u(x_u) \;\propto\; \Norm\!\left(x_u;\; m_u,\; \sigma^2 V_u\right).
+\end{equation}
+
+\paragraph{Initialisation.} At tip $i$, \eqref{eq:obs} gives $L_i(x_i) = \Norm(x_i; y_i, \tau^2)$, so
+\begin{equation}
+  m_i = y_i, \qquad V_i = \tau^2/\sigma^2 .
+  \label{eq:init}
+\end{equation}
+Heteroskedastic tip noise is accommodated at no cost by setting $V_i = \tau_i^2/\sigma^2$.
+
+\paragraph{Propagation along a branch.} Integrating \eqref{eq:bm} over $x_u$ for a child $u$ of $w$
+inflates the variance by the branch length,
+\begin{equation}
+  \tilde{V}_u \;=\; V_u + b_u .
+  \label{eq:prop}
+\end{equation}
+
+\paragraph{Fusion at an internal node.} For an internal node $w$ with children $a$ and $b$, the
+standard Gaussian product identity
+\begin{equation}
+  \Norm(x; \mu_1, s_1)\,\Norm(x; \mu_2, s_2)
+  \;=\;
+  \Norm\!\left(\mu_1; \mu_2, s_1 + s_2\right)\,
+  \Norm\!\left(x; \tfrac{\mu_1 s_2 + \mu_2 s_1}{s_1+s_2}, \tfrac{s_1 s_2}{s_1+s_2}\right)
+  \label{eq:gaussprod}
+\end{equation}
+applied with $s_1 = \sigma^2\tilde{V}_a$ and $s_2 = \sigma^2\tilde{V}_b$ gives the recursion
+\begin{align}
+  w_{\!\scriptscriptstyle W} &= \tilde{V}_a + \tilde{V}_b, &
+  \delta_{\!\scriptscriptstyle W} &= m_a - m_b, \label{eq:contrast}\\
+  V_{\!\scriptscriptstyle W} &= \frac{\tilde{V}_a \tilde{V}_b}{\tilde{V}_a + \tilde{V}_b}, &
+  m_{\!\scriptscriptstyle W} &= \frac{m_a \tilde{V}_b + m_b \tilde{V}_a}{\tilde{V}_a + \tilde{V}_b},
+  \label{eq:fuse}
+\end{align}
+and emits the factor $\Norm(\delta_{\!\scriptscriptstyle W}; 0, \sigma^2 w_{\!\scriptscriptstyle W})$,
+the \emph{contrast} between the two children. The product form
+$V_{\!\scriptscriptstyle W} = \tilde V_a \tilde V_b / (\tilde V_a + \tilde V_b)$ is preferred to the
+harmonic form $(\tilde V_a^{-1} + \tilde V_b^{-1})^{-1}$ because it remains well defined when one of
+the two vanishes, which happens whenever $\tau = 0$ meets a zero-length edge introduced by
+binarising a polytomy.
+
+\paragraph{Termination.} At the root, integrating the message against the prior \eqref{eq:root}
+using \eqref{eq:gaussprod} once more emits
+$\Norm\!\left(m_r - m_0;\, 0,\, \sigma^2 V_r + v_0\right)$.
+
+\begin{proposition}[Pruning computes the dense density]
+\label{prop:identity}
+With $\delta$ and $w$ as in \eqref{eq:contrast} over the $n-1$ internal nodes, and $\Sigma$ as in
+\eqref{eq:Sigma},
+\begin{equation}
+  \log \Norm\!\left(y;\, m_0\one,\, \Sigma\right)
+  =
+  -\frac{1}{2}\left[
+    n \log(2\pi\sigma^2)
+    + \sum_{W} \log w_{\!\scriptscriptstyle W} + \log v_r
+    + \frac{1}{\sigma^2}\left(\sum_{W} \frac{\delta_{\!\scriptscriptstyle W}^2}{w_{\!\scriptscriptstyle W}}
+      + \frac{(m_r-m_0)^2}{v_r}\right)
+  \right],
+  \label{eq:identity}
+\end{equation}
+where $v_r = V_r + v_0/\sigma^2$. In particular
+$\lvert\Sigma\rvert = \sigma^{2n}\, v_r \prod_{W} w_{\!\scriptscriptstyle W}$.
+\end{proposition}
+
+\begin{proof}
+Each step above is an exact Gaussian marginalisation of one latent variable, applied in post-order,
+so their product telescopes to $\int p(y \mid x)\,p(x)\,dx$, which is the left-hand side. The count
+of emitted factors is $(n-1) + 1 = n$, matching the dimension of $y$, and the emitted variances are
+exactly the pivots of a Cholesky factorisation of $\Sigma$ in the elimination order induced by the
+tree, which gives the determinant identity.
+\end{proof}
+
+Equation~\eqref{eq:identity} is the checkable statement: an implementation is correct if and only if
+it reproduces the dense log-density for arbitrary $(\sigma^2, \tau^2, v_0, m_0)$.
+
+\section{Implementing the recursion in Stan}
+\label{sec:stan}
+
+Section~\ref{sec:pruning} is an algorithm, and Stan is a declarative modelling language, so
+it is worth saying precisely how one becomes the other. The answer is that the recursion is
+written as an ordinary user-defined function in Stan's \texttt{functions} block, and nothing
+about it is special: no external C\texttt{++}, no hand-written derivatives, no custom
+distribution.
+
+\paragraph{The tree never enters as a tree.} Stan has no recursion, no pointers and no ragged
+arrays, so a post-order traversal cannot be expressed directly. Instead the tree is passed as
+flat arrays, with the nodes \emph{already numbered so that the traversal is a forward loop}:
+tips occupy slots $1,\dots,n$; internal nodes occupy $n{+}1,\dots,2n{-}1$; and the numbering
+is chosen so that
+\begin{equation}
+  \text{both children of node } u \text{ have indices } < u ,
+  \label{eq:ordering}
+\end{equation}
+which places the root last. Property \eqref{eq:ordering} is what makes
+\texttt{for (k in 1:(n-1))} a valid post-order: when the loop reaches an internal node, both
+of its children have already been computed. The renumbering is done once, in Python, by an
+iterative depth-first walk; the tree structure reaching Stan is then two integer arrays of
+child indices and one vector of branch lengths.
+
+\paragraph{Gradients come from autodiff.} The messages $m_u$ and $V_u$ are local real-valued
+variables whose values depend on the parameters, so Stan records the arithmetic of the forward
+loop on its expression tape and obtains $\nabla \log p$ by a reverse sweep. Nothing about the
+recursion needs to be differentiated by hand. The cost is $O(n)$ forward and $O(n)$ reverse per
+leapfrog step, against $O(n^3)$ for a Cholesky factorisation of $\Sigma$.
+
+\paragraph{The function.} Naming it with the \texttt{\_lpdf} suffix makes the sampling statement
+\texttt{y \textasciitilde{} bm\_prune(...)} available as sugar for
+\texttt{target += bm\_prune\_lpdf(y | ...)}. The body is a direct transcription of
+\eqref{eq:init}--\eqref{eq:fuse}:
+
+\begin{Verbatim}[fontsize=\small, xleftmargin=1em]
+real bm_prune_lpdf(vector y, array[] int c1, array[] int c2, vector blen,
+                   vector tau2_tip, real sigma2, real m0, real v0) {
+  int n = num_elements(y);
+  int N = 2 * n - 1;
+  vector[N] m;   vector[N] V;              // V in units of sigma^2
+  real q = 0;    real logdet = 0;
+  m[1:n] = y;
+  V[1:n] = tau2_tip / sigma2;
+  for (k in 1:(n - 1)) {
+    int a = c1[k];   int b = c2[k];
+    real va = V[a] + blen[a];
+    real vb = V[b] + blen[b];
+    real w  = va + vb;
+    q      += square(m[a] - m[b]) / w;
+    logdet += log(w);
+    V[n + k] = va * vb / w;
+    m[n + k] = (m[a] * vb + m[b] * va) / w;
+  }
+  real vr = V[N] + v0 / sigma2;
+  q      += square(m[N] - m0) / vr;
+  logdet += log(vr);
+  return -0.5 * (n * log(2 * pi() * sigma2) + logdet + q / sigma2);
+}
+\end{Verbatim}
+
+Two details are deliberate. The fused variance uses the product form
+$\tilde V_a \tilde V_b / (\tilde V_a + \tilde V_b)$ rather than the algebraically equivalent
+harmonic form, because the latter divides by a quantity that vanishes when $\tau = 0$ meets a
+zero-length edge --- precisely the situation created by binarising a polytomy. And the tip
+variances arrive as a \emph{vector}, so heteroskedastic noise costs nothing; this is what a
+collapsed group of $n_i$ indistinguishable cells needs, entering as $\tau^2_i = s^2/n_i$.
+
+\paragraph{Both engines in one file.} The dense form \eqref{eq:Sigma} is written as a second
+function in the same file. The \texttt{model} block uses pruning; \texttt{generated quantities}
+evaluates both and returns their difference:
+
+\begin{Verbatim}[fontsize=\small, xleftmargin=1em]
+generated quantities {
+  real lp_prune = bm_prune_lpdf(y | c1, c2, blen, tau2 * tip_w, sigma2, m0, v0_eff);
+  real lp_dense = bm_dense_lpdf(y | C, tau2 * tip_w, sigma2, m0, v0_eff);
+  real lp_diff  = lp_prune - lp_dense;
+}
+\end{Verbatim}
+
+Because both are evaluated at the same draw, $\max_{\text{draws}} |\mathrm{lp\_diff}|$ is a
+like-for-like test of Proposition~\ref{prop:identity} over the whole region the sampler visits,
+at no extra fitting cost and with no need to match parameter values between separate runs.
+
+\paragraph{Two optimisations available later.} Neither is applied in the first version, and
+both are recorded so they are not rediscovered. First, when $\tau^2 = 0$ the variance recursion
+\eqref{eq:prop}--\eqref{eq:fuse} contains no parameters at all --- $V_i = 0$ and
+$\tilde V_i = b_i$ --- so it can be hoisted into \texttt{transformed data} and computed once,
+leaving only the mean recursion per iteration. With homoskedastic noise it depends on the
+parameters through the single scalar $\tau^2/\sigma^2$. Second, when the model is extended to
+many genes the per-gene likelihoods are conditionally independent given the shared parameters,
+so \texttt{reduce\_sum} partitions the gene loop across threads with near-linear speedup. That
+is the property the full scBEM model relies on.
+
+\section{Identifiability of the rate against the tip noise}
+
+The two variance components compete: both inflate the diagonal of $\Sigma$. The following makes the
+competition precise.
+
+\begin{proposition}[Tip noise is a uniform lengthening of the terminal branches]
+\label{prop:degeneracy}
+Let $T_e$ denote $T$ with every terminal branch lengthened by $e > 0$, all else unchanged. Then
+\begin{equation}
+  C(T_e) \;=\; C(T) + e I .
+\end{equation}
+\end{proposition}
+
+\begin{proof}
+For $i \neq j$, $\mathrm{mrca}(i,j)$ is an internal node and the root-to-mrca path contains no
+terminal branch, so $C_{ij}$ is unchanged. For $i = j$, $C_{ii} = d_i$ is the tip depth, which gains
+exactly $e$.
+\end{proof}
+
+\begin{corollary}
+Brownian motion with rate $\sigma^2$ and no tip noise on $T_e$ is indistinguishable from Brownian
+motion with the same rate and tip noise $\tau^2 = \sigma^2 e$ on $T$. Tip noise is therefore
+identified only \emph{relative to a tree taken as known and fixed}.
+\end{corollary}
+
+\begin{proposition}[Identifiability given the tree]
+\label{prop:ident}
+Regard $T$ as fixed. The map $(\sigma^2,\tau^2) \mapsto \sigma^2 C + \tau^2 I$ is injective unless
+$C$ is a scalar multiple of $I$.
+\end{proposition}
+
+\begin{proof}
+$\sigma^2 C + \tau^2 I = \sigma'^2 C + \tau'^2 I$ implies
+$(\sigma^2 - \sigma'^2)\,C = (\tau'^2 - \tau^2)\, I$. If $\sigma^2 \neq \sigma'^2$ this forces
+$C \propto I$; otherwise $\tau^2 = \tau'^2$.
+\end{proof}
+
+Since $C \propto I$ requires every pair of tips to share no ancestral path, injectivity holds for
+every tree of interest. The practical question is conditioning, and it is answered by the smallest
+eigenvalue of $C$.
+
+\begin{proposition}[The worst-conditioned direction is a cherry contrast]
+\label{prop:cherry}
+Write $C = C' + \operatorname{diag}(b_1,\dots,b_n)$ where $b_i$ is the terminal branch above tip $i$
+and $C'_{ij} = d_{\mathrm{mrca}(i,j)}$ for $i \neq j$, $C'_{ii} = d_{p(i)}$. Then $C'$ is the
+covariance matrix of the parent values $(x_{p(1)},\dots,x_{p(n)})$ under \eqref{eq:bm} with
+$\sigma^2 = 1$, hence positive semidefinite; and it is singular whenever $T$ contains a
+\emph{cherry}, meaning two tips that share a parent. Consequently, if all terminal branches have
+the common length $b$,
+\begin{equation}
+  \lambda_{\min}(C) = b,
+\end{equation}
+attained on the contrast $e_i - e_j$ between the two tips of a cherry. Along that direction
+$\sigma^2 C + \tau^2 I$ acts as multiplication by $\sigma^2 b + \tau^2$, so the data constrain only
+that combination.
+\end{proposition}
+
+\begin{proof}
+$C'$ is a Gram matrix of the parent values by the same argument as
+Proposition~\ref{prop:marginal}, and if tips $i,j$ share a parent then rows $i$ and $j$ of $C'$
+coincide, so $(e_i - e_j) \in \ker C'$. With $b_i \equiv b$ we have $C = C' + bI$, whence
+$\lambda_{\min}(C) = \lambda_{\min}(C') + b = b$ with the same eigenvector.
+\end{proof}
+
+\begin{remark}[How bad it is, in numbers]
+The dimension of the near-degenerate subspace grows with the number of cherries, so the effect is not
+a single awkward direction but a substantial part of the spectrum. The Fisher information for
+$(\sigma^2,\tau^2)$ has entries
+$\mathcal{I}_{11} = \tfrac12\operatorname{tr}[(\Sigma^{-1}C)^2]$,
+$\mathcal{I}_{22} = \tfrac12\operatorname{tr}[\Sigma^{-2}]$,
+$\mathcal{I}_{12} = \tfrac12\operatorname{tr}[\Sigma^{-1}C\Sigma^{-1}]$,
+and the implied correlation is reported in Table~\ref{tab:fixtures}. It sits near $-0.74$ on both
+fixtures: strongly correlated, comfortably short of degenerate.
+\end{remark}
+
+\begin{table}[t]
+\centering
+\begin{tabular}{lrr}
+\toprule
+ & \emph{C.\ elegans} & SCOUT toy (casNJ) \\
+\midrule
+tips $n$                                   & 391      & 256 \\
+nodes after binarisation                   & 781      & 511 \\
+terminal branch lengths                    & 1--4     & all 1 \\
+tip depths                                 & 5--11    & 6--9 \\
+cherries                                   & 174      & 124 \\
+$\lambda_{\min}(C)$                        & 1.000    & 1.000 \\
+$\lambda_{\max}(C)$                        & 484.7    & 257.7 \\
+Fisher $\operatorname{corr}(\sigma^2,\tau^2)$ at $\sigma^2=\tau^2=1$ & $-0.741$ & $-0.737$ \\
+\bottomrule
+\end{tabular}
+\caption{The two fixtures, measured after collapsing unary chains and binarising polytomies.
+$\lambda_{\min}(C)$ equals the shortest terminal branch in both cases, as
+Proposition~\ref{prop:cherry} predicts. Note that the two trees are \emph{not} appreciably different
+in conditioning despite their different depth spreads.}
+\label{tab:fixtures}
+\end{table}
+
+\section{An exactly conjugate test configuration}
+
+Validating a sampler against another sampler is weak. The following configuration admits a closed
+form and therefore permits a check against a number.
+
+\begin{proposition}[Exact posterior]
+Set $\tau^2 = 0$ and scale the root prior with the rate, $v_0 = \sigma^2 k$ for fixed $k > 0$. Then
+with $M = C + k\one\one^{\!\top}$,
+\begin{equation}
+  y \mid \sigma^2 \sim \Norm\!\left(m_0\one,\; \sigma^2 M\right),
+  \qquad
+  Q = (y - m_0\one)^{\!\top} M^{-1} (y - m_0\one),
+\end{equation}
+and under $\sigma^2 \sim \mathrm{InvGamma}(a_0,b_0)$ the posterior is exactly
+\begin{equation}
+  \sigma^2 \mid y \;\sim\; \mathrm{InvGamma}\!\left(a_0 + \tfrac{n}{2},\; b_0 + \tfrac{Q}{2}\right),
+  \label{eq:conjugate}
+\end{equation}
+with generalised least squares estimator $\hat{\sigma}^2 = Q/n$.
+\end{proposition}
+
+The production model uses an unscaled $v_0$, for which no conjugacy holds; \eqref{eq:conjugate} is a
+test configuration selected by a flag, not the model.
+
+\section{Validation protocol}
+
+\begin{enumerate}
+  \item \textbf{Simulator agreement.} Two independent simulators --- Cholesky of \eqref{eq:Sigma},
+        and a recursive walk down the tree implementing \eqref{eq:bm}--\eqref{eq:obs} --- must agree
+        in distribution before either is used.
+  \item \textbf{Engine agreement.} The dense form \eqref{eq:Sigma} and the recursion
+        \eqref{eq:identity} must agree to $10^{-8}$ over a grid in
+        $(\sigma^2,\tau^2,v_0)$. A \textsc{numpy} prototype already agrees to $\sim 10^{-12}$ on both
+        fixtures across 27 settings.
+  \item \textbf{Exact arithmetic.} In the conjugate configuration, posterior quantiles must match
+        \eqref{eq:conjugate} within Monte Carlo error.
+  \item \textbf{Recovery and calibration.} The truth's posterior quantile must be uniform across
+        repeated simulations, and simulation-based calibration rank histograms must pass a
+        uniformity test at the $1\%$ level over 200 replicates.
+  \item \textbf{Scaling.} Wall-clock for the dense and pruning engines as $n$ grows, reported rather
+        than thresholded.
+\end{enumerate}
+
+Propositions~\ref{prop:degeneracy}, \ref{prop:ident} and \ref{prop:cherry}, and the engine agreement
+in item 2, have been verified numerically on both fixtures; the remaining items require Stan and have
+not been run.
+
+\end{document}

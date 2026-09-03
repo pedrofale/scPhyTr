@@ -27,3 +27,16 @@ paper/*.out
 paper/*.bbl
 paper/*.blg
 paper/*.synctex.gz
+
+# Re-fetchable SCOUT assets: the clone, their shipped data, and what extract_luad.R unpacks
+analysis/scout/external/
+analysis/scout/data/
+
+# LaTeX build artefacts alongside the .tex sources in analysis/ (the .tex and .pdf
+# are tracked on purpose; the rest is build junk)
+analysis/**/*.aux
+analysis/**/*.log
+analysis/**/*.out
+analysis/**/*.synctex.gz
+analysis/**/*.fls
+analysis/**/*.fdb_latexmk

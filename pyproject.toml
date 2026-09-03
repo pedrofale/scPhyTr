@@ -16,4 +16,10 @@ pandas = "*"
 jax = "*"
 optax = "*"
 blackjax = "<1.5"
+# scBEM is a Stan model (decision-scbem-stan-engine): cmdstanpy drives it, arviz
+# handles the posterior objects. NOTE cmdstanpy is only the Python driver -- CmdStan
+# itself is a C++ toolchain installed separately, once, with:
+#     python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"
+cmdstanpy = "*"
+arviz = "*"
 
